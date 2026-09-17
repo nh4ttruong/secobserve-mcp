@@ -15,9 +15,9 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.1.0
         with:
           enable-cache: true
 
@@ -46,7 +46,9 @@ jobs:
         run: uv build
 
       - name: Publish to PyPI
-        run: uv publish --trusted-publishing always
+        # --check-url lets a re-run skip files already uploaded instead of failing,
+        # so a later step failing does not strand the release.
+        run: uv publish --trusted-publishing always --check-url https://pypi.org/simple/secobserve-mcp/
 
       - name: Publish to the MCP Registry
         run: |
