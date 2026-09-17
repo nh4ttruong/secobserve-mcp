@@ -1,0 +1,56 @@
+name: Release
+
+# Publishing runs on a tag so the version that ships is the version that was tagged.
+# No API token is stored anywhere: PyPI uses trusted publishing and the MCP Registry
+# uses GitHub OIDC, both authenticated by this workflow's identity.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Check
+        run: |
+          uv sync --extra dev
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run mypy src
+          uv run pytest -q
+
+      - name: Verify the tag matches the packaged version
+        run: |
+          tagged="${GITHUB_REF_NAME#v}"
+          packaged=$(uv version --short)
+          test "$tagged" = "$packaged" || {
+            echo "tag $tagged does not match pyproject version $packaged" >&2
+            exit 1
+          }
+          test "$tagged" = "$(python3 -c 'import json;print(json.load(open("server.json"))["version"])')" || {
+            echo "tag $tagged does not match server.json version" >&2
+            exit 1
+          }
+
+      - name: Build
+        run: uv build
+
+      - name: Publish to PyPI
+        run: uv publish --trusted-publishing always
+
+      - name: Publish to the MCP Registry
+        run: |
+          curl -sSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/').tar.gz" \
+            | tar xz mcp-publisher
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish

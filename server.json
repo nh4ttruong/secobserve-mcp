@@ -1,0 +1,42 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.nh4ttruong/secobserve-mcp",
+  "description": "MCP server for SecObserve: triage observations, manage products and rules, import scan reports and SBOMs, generate VEX documents.",
+  "version": "0.1.0",
+  "repository": {
+    "url": "https://github.com/nh4ttruong/secobserve-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "secobserve-mcp",
+      "version": "0.1.0",
+      "transport": { "type": "stdio" },
+      "environmentVariables": [
+        {
+          "name": "SECOBSERVE_BASE_URL",
+          "description": "SecObserve base URL without /api, e.g. https://secobserve.example.com",
+          "isRequired": true
+        },
+        {
+          "name": "SECOBSERVE_API_TOKEN",
+          "description": "SecObserve user or product API token",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "SECOBSERVE_READ_ONLY",
+          "description": "Set to true to refuse every write operation",
+          "isRequired": false
+        },
+        {
+          "name": "SECOBSERVE_ALLOW_DELETE",
+          "description": "Set to true to enable the delete tool; deletion cascades and is irreversible",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+[project]
+name = "secobserve-mcp"
+version = "0.1.0"
+description = "MCP server for SecObserve vulnerability management"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "nh4ttruong" }]
+keywords = ["mcp", "model-context-protocol", "secobserve", "vulnerability-management", "sbom", "vex"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+    "Typing :: Typed",
+]
+dependencies = [
+    "mcp>=2.2,<3",
+    "httpx>=0.27",
+    "pydantic>=2.7",
+]
+
+[project.urls]
+Homepage = "https://github.com/nh4ttruong/secobserve-mcp"
+Repository = "https://github.com/nh4ttruong/secobserve-mcp"
+Issues = "https://github.com/nh4ttruong/secobserve-mcp/issues"
+
+[project.scripts]
+secobserve-mcp = "secobserve_mcp.__main__:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+    "mypy>=1.10",
+    "ruff>=0.5",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/secobserve_mcp"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
