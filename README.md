@@ -9,7 +9,7 @@
 
 [![Python](https://img.shields.io/badge/Python-%3E%3D3.11-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org)
 [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-2.x-6b4fbb?style=flat-square)](https://github.com/modelcontextprotocol/python-sdk)
-[![Version](https://img.shields.io/badge/version-0.1.1-blue?style=flat-square)](pyproject.toml)
+[![Version](https://img.shields.io/badge/version-0.1.2-blue?style=flat-square)](pyproject.toml)
 [![SecObserve](https://img.shields.io/badge/SecObserve-1.59.0-0b7285?style=flat-square)](https://github.com/MaibornWolff/SecObserve)
 
 [Tools](#tools) • [Install](#install) • [Configure](#configure) • [Register with a client](#register-with-a-client) • [Design](#design) • [Evaluation](#evaluation)

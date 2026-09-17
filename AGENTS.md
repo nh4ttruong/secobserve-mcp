@@ -37,7 +37,7 @@ Do not expand into these without the user asking.
 - Validation: Pydantic v2, one input model per tool.
 - Tests: `pytest` + `pytest-asyncio` (`asyncio_mode = "auto"`) with `respx` mocking HTTP.
 - Lint/types: `ruff` (line-length 120) and `mypy --strict`.
-- Current version: `0.1.1`.
+- Current version: `0.1.2`.
 - Baseline when this file was updated: 47 tests passing, ruff and mypy strict clean, stdio handshake and streamable HTTP both verified against a live instance.
 
 ## Code structure
