@@ -173,6 +173,70 @@ For changes touching the write paths (create, import, assessment, tasks), run `e
 - State whether you called a real instance, and which one.
 - If you changed an answer in `evaluation.xml`, say how you re-verified it.
 
+## Contributing
+
+### Commits
+
+Conventional Commits, one logical change per commit:
+
+```text
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
+```
+
+`type` is one of `feat`, `fix`, `docs`, `refactor`, `test`, `perf`, `build`, `ci`, `chore`. `scope` is optional and names the area, usually a module without its extension: `client`, `registry`, `schema`, `tools-crud`, `tools-workflows`, `evals`, `release`.
+
+The subject is imperative, lower case, no trailing period, at most 72 characters: `fix(schema): reject unknown filters before sending the request`.
+
+The body is where the work actually gets explained, and it is not optional for anything non-trivial. Say **why**, not what — the diff already shows what. If a change exists because of a behaviour in SecObserve or in the MCP SDK, name that behaviour; the next person cannot rediscover it from the code.
+
+A breaking change is `feat!:` or a `BREAKING CHANGE:` footer. Breaking here means a tool was renamed or removed, an input field changed shape, or an output schema changed — anything an already-configured client would notice.
+
+Never add AI attribution or co-author trailers.
+
+### Pull requests
+
+The PR describes the change, not the process of making it. Short, logical, technical. No screenshots of passing tests, no narration of what you tried first.
+
+Four parts, in this order:
+
+```markdown
+## Feature
+What this adds or fixes, in one or two sentences.
+
+## Change
+The technical substance: which modules, which behaviour, which contract.
+Bullets, not prose. Name the invariant if one is involved.
+
+## Impact
+What a user or an already-configured client notices. Say "none" when
+nothing observable changes. Call out anything that needs a version bump,
+a re-release, or a config change.
+
+## Notes
+Anything the reviewer needs and cannot see in the diff: a SecObserve
+behaviour you relied on, a limitation you accepted, a follow-up you
+deliberately left out.
+```
+
+Rules that matter more than the template:
+
+- One concern per PR. A refactor and a fix in the same PR means neither can be reverted alone.
+- Do not translate technical terms. `observation`, `assessment`, `projection`, `trusted publishing` stay as they are.
+- State what you actually verified, and what you did not. "47 tests pass, no live instance touched" is worth more than a claim that everything works.
+- If the change touches a documented invariant, say which one and why it still holds — or say plainly that it changes.
+
+### Releases
+
+Versions live in `pyproject.toml`, `server.json` and the git tag, and the release workflow fails when they disagree. The Python module reads its version from installed package metadata, so it is never edited by hand.
+
+To release: bump `pyproject.toml` and `server.json`, commit as `chore(release): v<x.y.z>`, then tag `v<x.y.z>` and push the tag. The workflow runs the checks, publishes to PyPI via trusted publishing, and registers with the MCP Registry via GitHub OIDC.
+
+A published version is permanent. PyPI does not allow re-uploading a version, so a bad release is fixed by releasing the next patch, never by retagging.
+
 ## Known limitations
 
 - Input schemas nest arguments under `params`, following the single-Pydantic-model convention of the `mcp-builder` skill. Clients render flat arguments better, but changing it breaks the interface of every tool at once.
@@ -181,7 +245,7 @@ For changes touching the write paths (create, import, assessment, tasks), run `e
 - No automated integration test runs in CI: verification against a real backend is still manual, via `--check` and `evals/seed.py`.
 - CI runs only on a `v*` tag, in `.github/workflows/release.yml`. There is no per-push test workflow yet, so a broken commit is only caught at release time.
 - Publishing is tokenless: PyPI trusted publishing plus GitHub OIDC for the registry. Both are configured on the provider side, not in this repo, so a fresh fork cannot release without setting them up.
-- Version lives in three places that must agree: `pyproject.toml`, `server.json`, and the git tag. The release workflow fails the build when they diverge.
+- Version lives in three places that must agree: `pyproject.toml`, `server.json`, and the git tag; the release workflow fails the build when they diverge. The Python module derives its own version from installed package metadata, so it is not a fourth place to edit.
 - The OpenAPI schema is cached per process with no TTL. If the backend is upgraded while the server runs, restart the server.
 
 Do not hide these limitations in tool descriptions or documentation when making related changes.
