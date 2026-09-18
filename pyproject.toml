@@ -1,18 +1,24 @@
 [project]
 name = "secobserve-mcp"
 version = "0.1.2"
-description = "MCP server for SecObserve vulnerability management"
+description = "MCP server for SecObserve: triage findings, import scan reports and SBOMs, generate VEX."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "nh4ttruong" }]
-keywords = ["mcp", "model-context-protocol", "secobserve", "vulnerability-management", "sbom", "vex"]
+keywords = [
+    "mcp", "model-context-protocol", "mcp-server", "secobserve",
+    "vulnerability-management", "sbom", "vex", "cyclonedx",
+    "devsecops", "appsec", "security", "ai-agent", "llm",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: System Administrators",
+    "Intended Audience :: Information Technology",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -29,7 +35,10 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/nh4ttruong/secobserve-mcp"
 Repository = "https://github.com/nh4ttruong/secobserve-mcp"
+Documentation = "https://github.com/nh4ttruong/secobserve-mcp#readme"
 Issues = "https://github.com/nh4ttruong/secobserve-mcp/issues"
+Changelog = "https://github.com/nh4ttruong/secobserve-mcp/releases"
+"MCP Registry" = "https://registry.modelcontextprotocol.io/?search=secobserve"
 
 [project.scripts]
 secobserve-mcp = "secobserve_mcp.__main__:main"
