@@ -14,6 +14,7 @@ jobs:
     environment: release
     permissions:
       id-token: write
+      contents: write
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -56,3 +57,9 @@ jobs:
             | tar xz mcp-publisher
           ./mcp-publisher login github-oidc
           ./mcp-publisher publish
+
+      - name: Create the GitHub release
+        # Last, so a release only appears once PyPI and the registry both took it.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --verify-tag
