@@ -63,7 +63,7 @@ def social_card() -> None:
 
     d.text((96, 124), "secobserve-mcp", font=font(WORDMARK, 74), fill=PAPER)
     d.text((96, 246), "MCP server for SecObserve —", font=font(WORDMARK, 33), fill=ACCENT)
-    d.text((96, 292), "vulnerability & license management", font=font(WORDMARK, 33), fill=ACCENT)
+    d.text((96, 292), "Vulnerability & License Management System", font=font(WORDMARK, 33), fill=ACCENT)
     d.text((96, 372), "Triage findings, import scan reports and SBOMs,", font=font(BODY, 29), fill=MUTED)
     d.text((96, 416), "run scans and generate VEX — from your agent.", font=font(BODY, 29), fill=MUTED)
 
