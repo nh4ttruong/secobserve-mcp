@@ -3,6 +3,8 @@
 <!-- prettier-ignore -->
 <div align="center">
 
+<img src="https://raw.githubusercontent.com/nh4ttruong/secobserve-mcp/main/docs/assets/logo.png" width="88" alt="">
+
 # secobserve-mcp
 
 *MCP server for SecObserve — triage, import and administration from an agent*
