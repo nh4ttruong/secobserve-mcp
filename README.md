@@ -19,9 +19,7 @@
 
 </div>
 
-Listed in the [official MCP Registry](https://registry.modelcontextprotocol.io/?search=secobserve) as `io.github.nh4ttruong/secobserve-mcp`.
-
-`secobserve-mcp` exposes the [SecObserve](https://github.com/MaibornWolff/SecObserve) REST API to an LLM agent over the [Model Context Protocol](https://modelcontextprotocol.io): browse and triage observations, manage products, branches and rules, import scan reports and SBOMs, run scans and background jobs, generate VEX documents. Transport is stdio by default.
+`secobserve-mcp` exposes the [SecObserve](https://github.com/MaibornWolff/SecObserve) REST API to an LLM agent over the [Model Context Protocol](https://modelcontextprotocol.io): browse and triage observations, manage products, branches and rules, import scan reports and SBOMs, run scans and background jobs, generate VEX documents. Transport is stdio by default. Listed in the [official MCP Registry](https://registry.modelcontextprotocol.io/?q=secobserve-mcp) as `io.github.nh4ttruong/secobserve-mcp`.
 
 ## Tools
 
