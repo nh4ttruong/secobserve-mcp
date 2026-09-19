@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import sys
 
+from . import __version__
 from .config import (
     ENV_ALLOW_DELETE,
     ENV_API_TOKEN,
@@ -43,6 +45,44 @@ def _load_tools() -> None:
     from . import tools_crud, tools_workflows  # noqa: F401
 
 
+TOKEN_PLACEHOLDER = "<your-api-token>"
+
+CLIENTS = ("claude", "codex", "json", "vscode")
+
+
+def _print_config(client: str) -> int:
+    """Print a ready-to-paste registration snippet for one MCP client.
+
+    The base URL is taken from the environment, but the token never is: this
+    output is pasted into shells, issues and screen shares, and a token that
+    was only ever in an env var should not end up in any of them.
+    """
+    base_url = get_config().base_url
+    env = {ENV_BASE_URL: base_url, ENV_API_TOKEN: TOKEN_PLACEHOLDER}
+
+    if client == "claude":
+        flags = " ".join(f"--env {k}={v}" for k, v in env.items())
+        print(f"claude mcp add secobserve {flags} -- uvx secobserve-mcp")
+    elif client == "codex":
+        # config.toml wants an inline table, not the JSON object the others take.
+        pairs = ", ".join(f'{k} = "{v}"' for k, v in env.items())
+        print("[mcp_servers.secobserve]")
+        print('command = "uvx"')
+        print('args = ["secobserve-mcp"]')
+        print(f"env = {{ {pairs} }}")
+    else:
+        # VS Code keys this block "servers"; everyone else kept "mcpServers".
+        key = "servers" if client == "vscode" else "mcpServers"
+        block = {key: {"secobserve": {"command": "uvx", "args": ["secobserve-mcp"], "env": env}}}
+        print(json.dumps(block, indent=2))
+
+    print(f"\nReplace {TOKEN_PLACEHOLDER}; create one with", file=sys.stderr)
+    print(f"  curl -X POST {base_url}/api/authentication/create_user_api_token/ \\", file=sys.stderr)
+    print('       -H "Content-Type: application/json" \\', file=sys.stderr)
+    print('       -d \'{"username": "you", "password": "...", "name": "mcp"}\'', file=sys.stderr)
+    return 0
+
+
 async def _check() -> int:
     from .client import close_client, request
 
@@ -73,7 +113,19 @@ def main() -> int:
     parser.add_argument("--host", default="127.0.0.1", help="bind address for --transport http")
     parser.add_argument("--port", type=int, default=8931, help="port for --transport http")
     parser.add_argument("--check", action="store_true", help="verify connectivity and credentials, then exit")
+    parser.add_argument(
+        "--print-config",
+        choices=CLIENTS,
+        metavar="CLIENT",
+        help=f"print a registration snippet for one of: {', '.join(CLIENTS)}",
+    )
+    parser.add_argument("--version", action="version", version=f"secobserve-mcp {__version__}")
     args = parser.parse_args()
+
+    # Before the credential check: this is what you run to find out how to
+    # supply credentials in the first place.
+    if args.print_config:
+        return _print_config(args.print_config)
 
     _load_tools()
     from .app import mcp
