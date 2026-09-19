@@ -59,7 +59,7 @@ src/secobserve_mcp/
 └── __main__.py         # argparse, --check, transport selection
 
 evals/seed.py           # seeds the dataset evaluation.xml asks about, via the server's own tools
-evaluation.xml          # 10 read-only questions with verified answers
+evaluation.xml          # 26 read-only questions with verified answers
 ```
 
 Layering rule: `tools_*` never calls `httpx` directly; every request goes through `client.request`. `client` knows nothing about resources; all resource knowledge lives in `registry` or is read from `schema`.

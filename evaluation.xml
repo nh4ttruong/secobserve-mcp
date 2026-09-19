@@ -5,10 +5,12 @@
 
       SECOBSERVE_BASE_URL=... SECOBSERVE_API_TOKEN=... uv run python evals/seed.py
 
-  Every answer below was verified by solving the question through the server's own
-  tools against that dataset. All questions are read-only and independent, and each
-  needs several tool calls: resolving a name to an id, listing with filters, and
-  usually correlating two resources.
+  Every answer is verified against exactly that dataset, and every question is read-only.
+
+  Data questions need several calls: resolving a name to an id, filtering a list, correlating two resources.
+  Behaviour questions probe the server itself: the resource catalogue, the live schema, the default projection, pagination, and the guards that have to fail loudly instead of returning a plausible wrong number.
+
+  Tool arguments are flat (resource=, filters=, fields=, page_size=), never nested under a params object, and an unknown argument name is rejected rather than dropped.
 -->
 <evaluation>
   <qa_pair>
@@ -50,5 +52,69 @@
   <qa_pair>
     <question>One observation in this instance has been given the status "Risk accepted". On which date does that risk acceptance expire? Answer as YYYY-MM-DD.</question>
     <answer>2027-06-30</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Without calling the SecObserve API at all, name the resource that holds the assessment history of observations, including the approval state of each assessment.</question>
+    <answer>observation_logs</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>The resource catalogue deliberately does not list the filters a resource accepts. Which endpoint of the running instance does this server read to answer "what can I filter observations by"?</question>
+    <answer>/api/oa3/schema/</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Try to list observations filtered by vulnerability_id. What do you get back, and what does that tell you about filter names in general?</question>
+    <answer>An error, raised before any request is sent: vulnerability_id is not a filter of 'observations', and the message lists the filters that are accepted. It never returns an unfiltered list, because django-filter would have ignored the parameter silently and the count would have been wrong.</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>What happens if you call the list tool with an argument named filter instead of filters?</question>
+    <answer>The call is rejected as an unknown argument. Unknown arguments are forbidden, so a misspelled argument name can never be dropped in silence and return an unfiltered list.</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>How many observations in this instance carry the vulnerability id CVE-2021-44228, and how many different products are they spread over?</question>
+    <answer>3 observations across 2 products</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Page through every observation in this instance with page_size=5. How many observations are there in total, and how many pages does that take?</question>
+    <answer>21 observations, 5 pages</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Listing observations returns a reduced set of fields per row. How many fields is the default projection, and what do you pass to get every column the API returns instead?</question>
+    <answer>14 fields; fields=["*"]</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Both observations and license_components can be projected down to the name of their product, but the field is not spelled the same way. Give the field name for each.</question>
+    <answer>product_data.name for observations, product_name for license_components</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>A free-text search of observations for "credential" matches how many findings, and in which products?</question>
+    <answer>2 findings: one in Payments API, one in Legacy Batch</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Product metrics are pre-aggregated and count only a product's default branch. How many open Critical observations does the current metrics snapshot report for the Payments API product?</question>
+    <answer>2</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>One kind of the instance status tool refuses to run on its own. Which kind is it, and which argument does it require?</question>
+    <answer>kind="purl_types" requires product_id</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Counting every branch, which product has the most observations still in status Open, and how many does it have?</question>
+    <answer>Payments API, 10</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>One scanner in this instance reported a finding that has since been assessed as a False positive. Which scanner is it, and which products has it reported findings in?</question>
+    <answer>SARIF, in Legacy Batch and Web Frontend</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Exactly one branch in this instance is not the default branch of its product. Name the product and the branch, and say how many observations that branch holds.</question>
+    <answer>Payments API, release/2.0, 3 observations</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>In the SBOM imported for the Payments API product, one license covers two components. Which license, and which two components?</question>
+    <answer>Apache-2.0, on log4j-core:2.14.1 and jackson-databind:2.12.3</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>The catalogue lists a named action on observations that counts the ones in status "In review", without listing them. Use it. What number does it return for this instance?</question>
+    <answer>0</answer>
   </qa_pair>
 </evaluation>
