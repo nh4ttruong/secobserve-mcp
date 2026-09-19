@@ -94,6 +94,18 @@ It prints the instance version, the authenticated user, and whether read-only an
 
 ## Register with a client
 
+The server prints its own registration snippet, so none of the blocks below have
+to be copied by hand:
+
+```bash
+uvx secobserve-mcp --print-config claude   # or: codex, vscode, json
+```
+
+It reads `SECOBSERVE_BASE_URL` from the environment and always leaves the token
+as a placeholder — the snippet is meant to be pasted somewhere, and a token
+should not travel with it. The hint goes to stderr, so `--print-config json >
+mcp.json` writes a clean file.
+
 ### Claude Code
 
 ```bash
