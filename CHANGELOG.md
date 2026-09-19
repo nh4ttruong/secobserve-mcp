@@ -4,6 +4,17 @@ Notable changes per release. Format follows [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-09-19
+
+### Fixed
+
+- Tool descriptions documented a `params` object that 0.2.0 had already removed. An agent following the description called with the old shape and was rejected by the new unknown-argument guard, so 0.2.0 and 0.2.1 shipped a description that contradicted their own schema.
+- `clear_priority` is documented, and `priority` no longer claims that null clears it.
+
+### Added
+
+- The evaluation suite grows from 10 read-only questions to 26, covering discovery, both correctness guards, projection, pagination, search, metrics, status and multi-step chains.
+
 ## [0.2.1] — 2026-09-19
 
 ### Fixed
@@ -57,7 +68,8 @@ Notable changes per release. Format follows [Keep a Changelog](https://keepachan
 
 First release. 18 tools over the SecObserve REST API: generic CRUD and discovery across ~50 resources, an escape hatch for the ~40 named actions, and validated workflows for assessment, four-eyes approval, metrics, import, scans, periodic tasks, status and VEX generation.
 
-[Unreleased]: https://github.com/nh4ttruong/secobserve-mcp/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/nh4ttruong/secobserve-mcp/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/nh4ttruong/secobserve-mcp/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/nh4ttruong/secobserve-mcp/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/nh4ttruong/secobserve-mcp/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/nh4ttruong/secobserve-mcp/compare/v0.1.2...v0.1.3
