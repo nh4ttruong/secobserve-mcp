@@ -18,12 +18,12 @@ What a user or an already-configured client notices. Write "None" when nothing
 observable changes. Call out anything needing a version bump or a config change.
 -->
 
+<!--
 ## Notes
 
-<!--
-Anything the reviewer needs and cannot see in the diff: a SecObserve behaviour
-you relied on, a limitation you accepted, a follow-up deliberately left out.
-State what you verified and what you did not.
+CRITICAL only, and delete this whole section when there is nothing critical:
+an accepted limitation, a trap the next person hits, a behaviour relied on
+that the diff does not show.
 -->
 
 - Verified:

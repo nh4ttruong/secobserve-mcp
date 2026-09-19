@@ -218,13 +218,20 @@ nothing observable changes. Call out anything that needs a version bump,
 a re-release, or a config change.
 
 ## Notes
-Only what the reviewer cannot see in the diff: a SecObserve behaviour you
-relied on, a limitation you accepted, a follow-up left out. A few bullets.
+Optional, and CRITICAL only: an accepted limitation, a trap the next person
+will hit, a behaviour relied on that the diff does not show. Nothing else
+belongs here — with nothing critical, the PR ends at Impact.
+
+- Verified:
+- Live instance touched: no
 ```
+
+The verification block closes every PR, with or without a `## Notes` section.
 
 Rules that matter more than the template:
 
 - Length is a rule, not a preference. If a section needs more than a few bullets, the PR is doing too much.
+- `## Notes` is CRITICAL or absent. A follow-up you chose not to do, a rationale you are proud of, and a detail already visible in the diff are none of them critical.
 - One concern per PR. A refactor and a fix in the same PR means neither can be reverted alone.
 - Do not translate technical terms. `observation`, `assessment`, `projection`, `trusted publishing` stay as they are.
 - State what you actually verified, and what you did not. "47 tests pass, no live instance touched" is worth more than a claim that everything works.
