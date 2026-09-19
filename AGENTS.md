@@ -37,6 +37,7 @@ Do not expand into these without the user asking.
 - Validation: Pydantic v2, one input model per tool.
 - Tests: `pytest` + `pytest-asyncio` (`asyncio_mode = "auto"`) with `respx` mocking HTTP.
 - Lint/types: `ruff` (line-length 120) and `mypy --strict`.
+- Container: `Dockerfile` (two stages, `python:3.13-slim`, non-root), published to `ghcr.io/nh4ttruong/secobserve-mcp` by the release workflow. Defaults to HTTP on 0.0.0.0:8931 and serves `GET /healthz` — liveness only, it never calls SecObserve.
 - CI: `.github/workflows/ci.yml` on every push to `main` and every pull request — ruff and mypy once, `pytest` on 3.11, 3.12, 3.13 and 3.14. `release.yml` re-runs the same checks on the tag, because the tagged commit is what ships.
 - Current version: `0.1.2`.
 - Baseline when this file was updated: 47 tests passing, ruff and mypy strict clean, stdio handshake and streamable HTTP both verified against a live instance.

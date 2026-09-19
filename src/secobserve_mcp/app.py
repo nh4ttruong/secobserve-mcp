@@ -6,6 +6,8 @@ MCP Python SDK 2.x; the class was called FastMCP in 1.x.
 from __future__ import annotations
 
 from mcp.server.mcpserver import MCPServer
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from . import __version__
 
@@ -34,3 +36,9 @@ mcp = MCPServer(
     version=__version__,
     instructions=INSTRUCTIONS,
 )
+
+
+@mcp.custom_route("/healthz", methods=["GET"])  # type: ignore[untyped-decorator]  # SDK decorator is untyped
+async def healthz(_: Request) -> JSONResponse:
+    """Liveness only; it never calls SecObserve, so a backend outage cannot trigger a restart."""
+    return JSONResponse({"status": "ok", "version": __version__})
