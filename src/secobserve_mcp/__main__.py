@@ -51,11 +51,9 @@ CLIENTS = ("claude", "codex", "json", "vscode")
 
 
 def _print_config(client: str) -> int:
-    """Print a ready-to-paste registration snippet for one MCP client.
+    """Print a registration snippet for one MCP client.
 
-    The base URL is taken from the environment, but the token never is: this
-    output is pasted into shells, issues and screen shares, and a token that
-    was only ever in an env var should not end up in any of them.
+    The base URL comes from the environment; the token never does, because this output gets pasted places.
     """
     base_url = get_config().base_url
     env = {ENV_BASE_URL: base_url, ENV_API_TOKEN: TOKEN_PLACEHOLDER}
@@ -64,14 +62,13 @@ def _print_config(client: str) -> int:
         flags = " ".join(f"--env {k}={v}" for k, v in env.items())
         print(f"claude mcp add secobserve {flags} -- uvx secobserve-mcp")
     elif client == "codex":
-        # config.toml wants an inline table, not the JSON object the others take.
         pairs = ", ".join(f'{k} = "{v}"' for k, v in env.items())
         print("[mcp_servers.secobserve]")
         print('command = "uvx"')
         print('args = ["secobserve-mcp"]')
         print(f"env = {{ {pairs} }}")
     else:
-        # VS Code keys this block "servers"; everyone else kept "mcpServers".
+        # VS Code keys this "servers"; everyone else kept "mcpServers".
         key = "servers" if client == "vscode" else "mcpServers"
         block = {key: {"secobserve": {"command": "uvx", "args": ["secobserve-mcp"], "env": env}}}
         print(json.dumps(block, indent=2))
@@ -122,8 +119,7 @@ def main() -> int:
     parser.add_argument("--version", action="version", version=f"secobserve-mcp {__version__}")
     args = parser.parse_args()
 
-    # Before the credential check: this is what you run to find out how to
-    # supply credentials in the first place.
+    # Before the credential check: this is how you find out how to supply them.
     if args.print_config:
         return _print_config(args.print_config)
 
@@ -142,7 +138,6 @@ def main() -> int:
         return asyncio.run(_check())
 
     if args.transport == "http":
-        # Stateless JSON: no per-client session state to scale or expire.
         mcp.run(
             transport="streamable-http",
             host=args.host,

@@ -142,7 +142,8 @@ This is the most important invariant in the repository.
 - Never create a new `httpx.AsyncClient` per request.
 - No business logic in `client.py`, no HTTP in `tools_*`.
 - No new dependency for something a few lines of code can do.
-- Comment only what cannot be derived from the code; no comments restating the line below.
+- Comments are sparse. Only what cannot be derived from the code, never a comment restating the line below, and a clear name or a short docstring in preference to either.
+- No comment points at another repository. Sibling repos change without notice and the comment goes stale in silence.
 - Never call mutating endpoints on a real SecObserve instance from tests.
 - A new tool ships with tests for its guards, not just the happy path.
 
@@ -175,6 +176,15 @@ For changes touching the write paths (create, import, assessment, tasks), run `e
 - If you changed an answer in `evaluation.xml`, say how you re-verified it.
 
 ## Contributing
+
+### Writing
+
+Applies to every file: Markdown, YAML, docstrings, commit messages, PR bodies.
+
+- Do not hard-wrap prose. One sentence or one bullet per line, however long it runs. Python obeys the 120-character ruff limit, which is a formatter rule and not a prose one.
+- Say it once. No paragraph restating a bullet, no sentence defending a decision nobody questioned.
+- Do not translate technical terms. `observation`, `assessment`, `projection`, `trusted publishing` stay as they are.
+- Shortest version that still carries the point. If it reads like it is explaining itself, cut it.
 
 ### Commits
 
@@ -218,9 +228,8 @@ nothing observable changes. Call out anything that needs a version bump,
 a re-release, or a config change.
 
 ## Notes
-Optional, and CRITICAL only: an accepted limitation, a trap the next person
-will hit, a behaviour relied on that the diff does not show. Nothing else
-belongs here — with nothing critical, the PR ends at Impact.
+Optional, and CRITICAL only: an accepted limitation, or a trap the next person will hit.
+With nothing critical, the PR ends at Impact.
 
 - Verified:
 - Live instance touched: no
@@ -233,7 +242,6 @@ Rules that matter more than the template:
 - Length is a rule, not a preference. If a section needs more than a few bullets, the PR is doing too much.
 - `## Notes` is CRITICAL or absent. A follow-up you chose not to do, a rationale you are proud of, and a detail already visible in the diff are none of them critical.
 - One concern per PR. A refactor and a fix in the same PR means neither can be reverted alone.
-- Do not translate technical terms. `observation`, `assessment`, `projection`, `trusted publishing` stay as they are.
 - State what you actually verified, and what you did not. "47 tests pass, no live instance touched" is worth more than a claim that everything works.
 - If the change touches a documented invariant, say which one and why it still holds — or say plainly that it changes.
 
