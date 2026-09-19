@@ -131,16 +131,16 @@ async def secobserve_assess_observation(
     refused while the previous one is still in 'Needs approval'.
 
     Args:
-        params (AssessObservationInput): Validated input containing:
-            - observation_id (int): Observation to assess.
-            - severity (Optional[Severity]): Unknown/None/Low/Medium/High/Critical.
-            - status (Optional[Status]): Open/Affected/Resolved/Duplicate/False positive/
-              In review/Not affected/Not security/Risk accepted.
-            - priority (Optional[int]): 1-99, or null to clear.
-            - vex_justification (Optional[VexJustification]): Machine-readable reason,
-              expected with 'Not affected' and 'False positive'.
-            - risk_acceptance_expiry_date (Optional[str]): YYYY-MM-DD, for 'Risk accepted'.
-            - comment (str): Mandatory rationale, 1-4096 characters.
+        observation_id (int): Observation to assess.
+        severity (Optional[Severity]): Unknown/None/Low/Medium/High/Critical.
+        status (Optional[Status]): Open/Affected/Resolved/Duplicate/False positive/
+          In review/Not affected/Not security/Risk accepted.
+        priority (Optional[int]): 1-99.
+        clear_priority (bool): Remove the priority instead of setting one.
+        vex_justification (Optional[VexJustification]): Machine-readable reason,
+          expected with 'Not affected' and 'False positive'.
+        risk_acceptance_expiry_date (Optional[str]): YYYY-MM-DD, for 'Risk accepted'.
+        comment (str): Mandatory rationale, 1-4096 characters.
 
     Returns:
         str: A confirmation line naming the observation and the fields changed, plus
@@ -222,13 +222,12 @@ async def secobserve_bulk_assess_observations(
     fields=["id"]; a filter that matches more than 250 rows needs several calls.
 
     Args:
-        params (BulkAssessInput): Validated input containing:
-            - observation_ids (List[int]): 1-250 observation ids.
-            - product_id (Optional[int]): Use the product-scoped endpoint instead of
-              the instance-wide one; required for product API tokens.
-            - severity, status, priority, vex_justification,
-              risk_acceptance_expiry_date: as in secobserve_assess_observation.
-            - comment (str): Mandatory rationale applied to every observation.
+        observation_ids (List[int]): 1-250 observation ids.
+        product_id (Optional[int]): Use the product-scoped endpoint instead of
+          the instance-wide one; required for product API tokens.
+        severity, status, priority, clear_priority, vex_justification,
+          risk_acceptance_expiry_date: as in secobserve_assess_observation.
+        comment (str): Mandatory rationale applied to every observation.
 
     Returns:
         str: A confirmation naming the number of observations submitted and the
@@ -322,15 +321,14 @@ async def secobserve_approve_observation_log(
     requires a remark, which is what the submitter sees.
 
     Args:
-        params (ApproveInput): Validated input containing:
-            - observation_log_ids (List[int]): 1-250 pending observation log ids.
-            - assessment_status (ApprovalStatus): "Approved", "Approved with edits"
-              or "Rejected".
-            - rejection_remark (Optional[str]): Required when rejecting.
-            - observation_log_comment (Optional[str]): Replacement comment, only with
-              "Approved with edits".
-            - observation_log_vex_justification (Optional[VexJustification]):
-              Replacement justification, only with "Approved with edits" and one id.
+        observation_log_ids (List[int]): 1-250 pending observation log ids.
+        assessment_status (ApprovalStatus): "Approved", "Approved with edits"
+          or "Rejected".
+        rejection_remark (Optional[str]): Required when rejecting.
+        observation_log_comment (Optional[str]): Replacement comment, only with
+          "Approved with edits".
+        observation_log_vex_justification (Optional[VexJustification]):
+          Replacement justification, only with "Approved with edits" and one id.
 
     Returns:
         str: A confirmation naming the verdict and how many logs it was applied to.
@@ -423,13 +421,12 @@ async def secobserve_product_metrics(
     before quoting a number as current.
 
     Args:
-        params (MetricsInput): Validated input containing:
-            - kind (str): "current", "timeline" or "status".
-            - product_id (Optional[int]): One product, or every product in a group
-              when the id is a product group. Omit for the instance.
-            - age (Optional[MetricsAge]): Window for "timeline": "Past 7 days",
-              "Past 30 days", "Past 90 days", "Past 365 days".
-            - response_format (ResponseFormat): "json" (default) or "markdown".
+        kind (str): "current", "timeline" or "status".
+        product_id (Optional[int]): One product, or every product in a group
+          when the id is a product group. Omit for the instance.
+        age (Optional[MetricsAge]): Window for "timeline": "Past 7 days",
+          "Past 30 days", "Past 90 days", "Past 365 days".
+        response_format (ResponseFormat): "json" (default) or "markdown".
 
     Returns:
         str: For kind="current", a JSON object of counts keyed by severity
@@ -537,17 +534,16 @@ async def secobserve_upload_file(
     the working directory by default) and be at most 64 MiB.
 
     Args:
-        params (UploadInput): Validated input containing:
-            - kind (str): "observations", "sbom" or "vex".
-            - file_path (str): Path to the report, absolute or relative to the import directory.
-            - product_id (Optional[int]) / product_name (Optional[str]): exactly one,
-              ignored for kind="vex" which matches on the document's own product data.
-            - branch_id (Optional[int]) with product_id, or branch_name (Optional[str])
-              with product_name; a named branch is created if missing.
-            - service (Optional[str]): Service to attach findings to.
-            - suppress_licenses (Optional[bool]): kind="observations" only.
-            - docker_image_name_tag / endpoint_url / kubernetes_cluster /
-              kubernetes_namespace (Optional[str]): origin metadata recorded on each finding.
+        kind (str): "observations", "sbom" or "vex".
+        file_path (str): Path to the report, absolute or relative to the import directory.
+        product_id (Optional[int]) / product_name (Optional[str]): exactly one,
+          ignored for kind="vex" which matches on the document's own product data.
+        branch_id (Optional[int]) with product_id, or branch_name (Optional[str])
+          with product_name; a named branch is created if missing.
+        service (Optional[str]): Service to attach findings to.
+        suppress_licenses (Optional[bool]): kind="observations" only.
+        docker_image_name_tag / endpoint_url / kubernetes_cluster /
+          kubernetes_namespace (Optional[str]): origin metadata recorded on each finding.
 
     Returns:
         str: The import counts as reported by the API, one per line -- for
@@ -650,13 +646,12 @@ async def secobserve_api_import(
     The call blocks while SecObserve fetches and parses, so it can take a while.
 
     Args:
-        params (ApiImportInput): Validated input containing:
-            - api_configuration_id (Optional[int]) or api_configuration_name
-              (Optional[str]): exactly one.
-            - branch_id (Optional[int]) with the id form, or branch_name
-              (Optional[str]) with the name form; a named branch is created if missing.
-            - service (Optional[str]): Service to attach findings to.
-            - docker_image_name_tag / endpoint_url (Optional[str]): origin metadata.
+        api_configuration_id (Optional[int]) or api_configuration_name
+          (Optional[str]): exactly one.
+        branch_id (Optional[int]) with the id form, or branch_name
+          (Optional[str]) with the name form; a named branch is created if missing.
+        service (Optional[str]): Service to attach findings to.
+        docker_image_name_tag / endpoint_url (Optional[str]): origin metadata.
 
     Returns:
         str: observations_new, observations_updated and observations_resolved as
@@ -736,10 +731,9 @@ async def secobserve_trigger_scan(
     components can exceed the HTTP timeout.
 
     Args:
-        params (TriggerScanInput): Validated input containing:
-            - scanner (str): "osv" or "vulnerablecode".
-            - product_id (int): Product to scan.
-            - branch_id (Optional[int]): One branch, or every branch when omitted.
+        scanner (str): "osv" or "vulnerablecode".
+        product_id (int): Product to scan.
+        branch_id (Optional[int]): One branch, or every branch when omitted.
 
     Returns:
         str: observations_new, observations_updated and observations_resolved for
@@ -793,9 +787,8 @@ async def secobserve_run_periodic_task(
     runs at a time.
 
     Args:
-        params (RunPeriodicTaskInput): Validated input containing:
-            - task (Optional[str]): Registered task name. Omit to list the accepted
-              names without running anything.
+        task (Optional[str]): Registered task name. Omit to list the accepted
+          names without running anything.
 
     Returns:
         str: With no task, a JSON array of registered task names. With a task, a
@@ -865,10 +858,9 @@ async def secobserve_status(
     management or the built-in scanners are switched on at all.
 
     Args:
-        params (StatusInput): Validated input containing:
-            - kind (str): "version", "health", "settings", "background_tasks" or "purl_types".
-            - product_id (Optional[int]): Required for kind="purl_types".
-            - purl_type (Optional[str]): With kind="purl_types", look up one type.
+        kind (str): "version", "health", "settings", "background_tasks" or "purl_types".
+        product_id (Optional[int]): Required for kind="purl_types".
+        purl_type (Optional[str]): With kind="purl_types", look up one type.
 
     Returns:
         str: The endpoint's JSON response. "version" gives {"version": str};
@@ -965,18 +957,17 @@ async def secobserve_vex_document(
     creating a new one. The generated file is written to the server's export directory.
 
     Args:
-        params (VexDocumentInput): Validated input containing:
-            - format (str): "csaf", "openvex" or "cyclonedx".
-            - document_id_prefix (Optional[str]): Required to create, and to identify
-              a document to update.
-            - document_base_id (Optional[str]): Present only when updating.
-            - product_id (Optional[int]) and/or vulnerability_names (Optional[List[str]]):
-              the scope when creating; at least one is required.
-            - branch_ids (Optional[List[int]]): Restrict to these branches.
-            - fields (Optional[dict]): Format-specific metadata (CSAF: title,
-              publisher_name, publisher_category, publisher_namespace, tracking_status,
-              tlp_label; OpenVEX: id_namespace, author, role; CycloneDX: author, manufacturer).
-            - filename (Optional[str]): Base filename for the written document.
+        format (str): "csaf", "openvex" or "cyclonedx".
+        document_id_prefix (Optional[str]): Required to create, and to identify
+          a document to update.
+        document_base_id (Optional[str]): Present only when updating.
+        product_id (Optional[int]) and/or vulnerability_names (Optional[List[str]]):
+          the scope when creating; at least one is required.
+        branch_ids (Optional[List[int]]): Restrict to these branches.
+        fields (Optional[dict]): Format-specific metadata (CSAF: title,
+          publisher_name, publisher_category, publisher_namespace, tracking_status,
+          tlp_label; OpenVEX: id_namespace, author, role; CycloneDX: author, manufacturer).
+        filename (Optional[str]): Base filename for the written document.
 
     Returns:
         str: A line giving the absolute path and byte size of the document written
