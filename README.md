@@ -201,7 +201,7 @@ The suite mocks the SecObserve API with `respx`: it covers projection, paginatio
 
 ## Evaluation
 
-`evaluation.xml` holds ten read-only questions for measuring how well an agent uses this server. Each needs several tool calls — resolving a name to an id, filtering a list, and correlating two resources — and each has one string-comparable answer.
+`evaluation.xml` holds 26 read-only questions for measuring how well an agent uses this server. Data questions need several tool calls — resolving a name to an id, filtering a list, correlating two resources. Behaviour questions cover the catalogue, the live schema, the default projection, pagination, and the guards that must fail loudly rather than return a plausible wrong number.
 
 The answers are verified against the dataset `evals/seed.py` creates: three products, two of them in a product group, four branches, 21 findings from five scanners, an SBOM with a license-policy verdict, and three assessments. Seed an **empty** instance, since the answers are counts:
 
