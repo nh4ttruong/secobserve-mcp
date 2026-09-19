@@ -8,34 +8,31 @@ from pathlib import Path
 import httpx
 import pytest
 import respx
-from pydantic import ValidationError
+from mcp.server.mcpserver.exceptions import ToolError
 
 from secobserve_mcp import config
+from secobserve_mcp.app import mcp
 from secobserve_mcp.formatting import ResponseFormat
 from secobserve_mcp.tools_crud import (
-    CallActionInput,
-    DeleteInput,
-    ListInput,
-    ListResourcesInput,
     secobserve_call_action,
     secobserve_delete,
     secobserve_list,
     secobserve_list_resources,
 )
 from secobserve_mcp.tools_workflows import (
-    ApproveInput,
-    AssessObservationInput,
-    BulkAssessInput,
-    UploadInput,
-    secobserve_approve_observation_log,
-    secobserve_assess_observation,
-    secobserve_bulk_assess_observations,
     secobserve_upload_file,
 )
 
 from .conftest import BASE_URL
 
 API = f"{BASE_URL}/api"
+
+
+async def call(name: str, **arguments: object) -> str:
+    """Go through the protocol, so argument coercion and schema validation are exercised too."""
+    result = await mcp.call_tool(name, arguments)
+    return str(result.content[0].text)
+
 
 FAT_OBSERVATION = {
     "id": 8123,
@@ -67,7 +64,7 @@ async def test_list_projects_away_the_bulk_of_each_row() -> None:
         return_value=httpx.Response(200, json={"count": 1, "next": None, "results": [FAT_OBSERVATION]})
     )
 
-    result = await secobserve_list(ListInput(resource="observations", response_format=ResponseFormat.JSON))
+    result = await secobserve_list(resource="observations", response_format=ResponseFormat.JSON)
     payload = json.loads(result)
 
     assert payload["items"][0]["product_data.name"] == "Portal"
@@ -82,7 +79,7 @@ async def test_list_star_fields_returns_everything() -> None:
     )
 
     payload = json.loads(
-        await secobserve_list(ListInput(resource="observations", fields=["*"], response_format=ResponseFormat.JSON))
+        await secobserve_list(resource="observations", fields=["*"], response_format=ResponseFormat.JSON)
     )
 
     assert "description" in payload["items"][0]
@@ -97,9 +94,7 @@ async def test_list_reports_pagination_so_the_agent_can_continue() -> None:
     )
 
     payload = json.loads(
-        await secobserve_list(
-            ListInput(resource="observations", page=2, page_size=50, response_format=ResponseFormat.JSON)
-        )
+        await secobserve_list(resource="observations", page=2, page_size=50, response_format=ResponseFormat.JSON)
     )
 
     assert payload["total"] == 120
@@ -113,28 +108,28 @@ async def test_markdown_truncates_long_values_and_says_so() -> None:
         return_value=httpx.Response(200, json={"count": 1, "next": None, "results": [FAT_OBSERVATION]})
     )
 
-    result = await secobserve_list(ListInput(resource="observations", fields=["id", "description"]))
+    result = await secobserve_list(resource="observations", fields=["id", "description"])
 
     assert "secobserve_get for the full text" in result
     assert len(result) < 1500
 
 
 async def test_unknown_resource_names_close_matches() -> None:
-    result = await secobserve_list(ListInput(resource="observation"))
+    result = await secobserve_list(resource="observation")
 
     assert result.startswith("Error:")
     assert "secobserve_list_resources" in result
 
 
 async def test_unsupported_operation_lists_what_is_supported() -> None:
-    result = await secobserve_list(ListInput(resource="settings"))
+    result = await secobserve_list(resource="settings")
 
     assert "does not support 'list'" in result
     assert "get, update" in result
 
 
 async def test_catalogue_covers_every_resource_and_its_actions() -> None:
-    catalogue = await secobserve_list_resources(ListResourcesInput())
+    catalogue = await secobserve_list_resources()
 
     assert "## observations" in catalogue
     assert "action `assessment`" in catalogue
@@ -142,7 +137,7 @@ async def test_catalogue_covers_every_resource_and_its_actions() -> None:
 
 
 async def test_delete_is_off_until_explicitly_enabled() -> None:
-    result = await secobserve_delete(DeleteInput(resource="license_policy_items", id=1))
+    result = await secobserve_delete(resource="license_policy_items", id=1)
 
     assert "SECOBSERVE_ALLOW_DELETE" in result
 
@@ -151,7 +146,7 @@ async def test_product_delete_demands_the_exact_name(monkeypatch: pytest.MonkeyP
     monkeypatch.setenv(config.ENV_ALLOW_DELETE, "true")
     config.get_config.cache_clear()
 
-    result = await secobserve_delete(DeleteInput(resource="products", id=12))
+    result = await secobserve_delete(resource="products", id=12)
 
     assert "confirm_name" in result
 
@@ -162,26 +157,26 @@ async def test_product_delete_passes_the_name_through(monkeypatch: pytest.Monkey
     config.get_config.cache_clear()
     route = respx.delete(f"{API}/products/12/").mock(return_value=httpx.Response(204))
 
-    await secobserve_delete(DeleteInput(resource="products", id=12, confirm_name="Portal"))
+    await secobserve_delete(resource="products", id=12, confirm_name="Portal")
 
     assert route.calls.last.request.url.params["name"] == "Portal"
 
 
 async def test_action_must_exist_on_the_resource() -> None:
-    result = await secobserve_call_action(CallActionInput(resource="products", action="nope", id=1))
+    result = await secobserve_call_action(resource="products", action="nope", id=1)
 
     assert "has no action 'nope'" in result
     assert "apply_rules" in result, "the error must list the actions that do exist"
 
 
 async def test_detail_action_requires_an_id() -> None:
-    result = await secobserve_call_action(CallActionInput(resource="products", action="apply_rules"))
+    result = await secobserve_call_action(resource="products", action="apply_rules")
 
     assert "works on one record" in result
 
 
 async def test_collection_action_rejects_an_id() -> None:
-    result = await secobserve_call_action(CallActionInput(resource="observations", action="count_reviews", id=1))
+    result = await secobserve_call_action(resource="observations", action="count_reviews", id=1)
 
     assert "works on the collection" in result
 
@@ -192,9 +187,7 @@ async def test_binary_action_is_written_to_the_export_directory() -> None:
         return_value=httpx.Response(200, content=b"PK\x03\x04excel-bytes")
     )
 
-    result = await secobserve_call_action(
-        CallActionInput(resource="products", action="export_observations_excel", id=12)
-    )
+    result = await secobserve_call_action(resource="products", action="export_observations_excel", id=12)
 
     written = Path(config.get_config().export_dir) / "products-export_observations_excel-12.xlsx"
     assert written.exists()
@@ -205,9 +198,7 @@ async def test_binary_action_is_written_to_the_export_directory() -> None:
 async def test_export_filename_cannot_escape_the_export_directory() -> None:
     respx.get(f"{API}/products/12/export_observations_csv/").mock(return_value=httpx.Response(200, content=b"a,b"))
 
-    await secobserve_call_action(
-        CallActionInput(resource="products", action="export_observations_csv", id=12, filename="../../escaped")
-    )
+    await secobserve_call_action(resource="products", action="export_observations_csv", id=12, filename="../../escaped")
 
     export_dir = Path(config.get_config().export_dir)
     assert [p.name for p in export_dir.iterdir()] == ["escaped.csv"]
@@ -217,13 +208,12 @@ async def test_export_filename_cannot_escape_the_export_directory() -> None:
 async def test_assessment_sends_only_the_fields_that_changed() -> None:
     route = respx.patch(f"{API}/observations/8123/assessment/").mock(return_value=httpx.Response(200))
 
-    await secobserve_assess_observation(
-        AssessObservationInput(
-            observation_id=8123,
-            status="Not affected",
-            vex_justification="vulnerable_code_not_in_execute_path",
-            comment="The parser is never reached from our entry points.",
-        )
+    await call(
+        "secobserve_assess_observation",
+        observation_id=8123,
+        status="Not affected",
+        vex_justification="vulnerable_code_not_in_execute_path",
+        comment="The parser is never reached from our entry points.",
     )
 
     body = json.loads(route.calls.last.request.content)
@@ -236,57 +226,66 @@ async def test_assessment_sends_only_the_fields_that_changed() -> None:
 
 
 @respx.mock
-async def test_explicit_null_priority_is_sent_to_clear_it() -> None:
+async def test_clear_priority_sends_an_explicit_null() -> None:
     route = respx.patch(f"{API}/observations/8123/assessment/").mock(return_value=httpx.Response(200))
 
-    await secobserve_assess_observation(
-        AssessObservationInput(observation_id=8123, priority=None, comment="Priority no longer applies.")
-    )
+    await call("secobserve_assess_observation", observation_id=8123, clear_priority=True, comment="No longer applies.")
 
     assert json.loads(route.calls.last.request.content)["priority"] is None
 
 
 async def test_assessment_without_a_comment_is_refused_by_the_schema() -> None:
-    with pytest.raises(ValidationError):
-        AssessObservationInput(observation_id=1, status="Resolved")
+    with pytest.raises(ToolError, match="comment"):
+        await call("secobserve_assess_observation", observation_id=1, status="Resolved")
 
 
 async def test_assessment_that_changes_nothing_is_refused() -> None:
-    with pytest.raises(ValidationError, match="at least one of severity"):
-        AssessObservationInput(observation_id=1, comment="just a note")
+    assert "at least one of severity" in await call(
+        "secobserve_assess_observation", observation_id=1, comment="just a note"
+    )
 
 
 async def test_invalid_status_is_refused_before_any_request() -> None:
-    with pytest.raises(ValidationError):
-        AssessObservationInput(observation_id=1, status="Mitigated", comment="c")
+    with pytest.raises(ToolError):
+        await call("secobserve_assess_observation", observation_id=1, status="Mitigated", comment="c")
 
 
 @respx.mock
 async def test_bulk_assessment_uses_the_product_endpoint_when_scoped() -> None:
     route = respx.post(f"{API}/products/12/observations_bulk_assessment/").mock(return_value=httpx.Response(204))
 
-    await secobserve_bulk_assess_observations(
-        BulkAssessInput(observation_ids=[1, 2, 3], product_id=12, status="Resolved", comment="Branch decommissioned.")
+    await call(
+        "secobserve_bulk_assess_observations",
+        observation_ids=[1, 2, 3],
+        product_id=12,
+        status="Resolved",
+        comment="Branch decommissioned.",
     )
 
     assert json.loads(route.calls.last.request.content)["observations"] == [1, 2, 3]
 
 
 async def test_bulk_assessment_is_capped_at_the_api_limit() -> None:
-    with pytest.raises(ValidationError):
-        BulkAssessInput(observation_ids=list(range(1, 252)), status="Resolved", comment="c")
+    with pytest.raises(ToolError):
+        await call(
+            "secobserve_bulk_assess_observations",
+            observation_ids=list(range(1, 252)),
+            status="Resolved",
+            comment="c",
+        )
 
 
 async def test_rejection_requires_a_remark() -> None:
-    with pytest.raises(ValidationError, match="rejection_remark"):
-        ApproveInput(observation_log_ids=[1], assessment_status="Rejected")
+    assert "rejection_remark" in await call(
+        "secobserve_approve_observation_log", observation_log_ids=[1], assessment_status="Rejected"
+    )
 
 
 @respx.mock
 async def test_single_approval_uses_the_detail_endpoint() -> None:
     route = respx.patch(f"{API}/observation_logs/991/approval/").mock(return_value=httpx.Response(200))
 
-    await secobserve_approve_observation_log(ApproveInput(observation_log_ids=[991], assessment_status="Approved"))
+    await call("secobserve_approve_observation_log", observation_log_ids=[991], assessment_status="Approved")
 
     assert json.loads(route.calls.last.request.content) == {"assessment_status": "Approved"}
 
@@ -295,8 +294,11 @@ async def test_single_approval_uses_the_detail_endpoint() -> None:
 async def test_several_approvals_use_the_bulk_endpoint() -> None:
     route = respx.post(f"{API}/observation_logs/bulk_approval/").mock(return_value=httpx.Response(204))
 
-    await secobserve_approve_observation_log(
-        ApproveInput(observation_log_ids=[991, 992], assessment_status="Rejected", rejection_remark="Evidence missing.")
+    await call(
+        "secobserve_approve_observation_log",
+        observation_log_ids=[991, 992],
+        assessment_status="Rejected",
+        rejection_remark="Evidence missing.",
     )
 
     body = json.loads(route.calls.last.request.content)
@@ -308,7 +310,7 @@ async def test_upload_refuses_a_path_outside_the_import_directory(tmp_path: Path
     outside = tmp_path / "secret.json"
     outside.write_text("{}")
 
-    result = await secobserve_upload_file(UploadInput(kind="observations", file_path=str(outside), product_id=12))
+    result = await secobserve_upload_file(kind="observations", file_path=str(outside), product_id=12)
 
     assert "uploads are confined to" in result
     assert "SECOBSERVE_IMPORT_DIR" in result
@@ -318,7 +320,7 @@ async def test_upload_refuses_an_empty_report() -> None:
     empty = Path(config.get_config().import_dir) / "empty.json"
     empty.write_text("")
 
-    result = await secobserve_upload_file(UploadInput(kind="observations", file_path="empty.json", product_id=12))
+    result = await secobserve_upload_file(kind="observations", file_path="empty.json", product_id=12)
 
     assert "is empty" in result
 
@@ -335,7 +337,7 @@ async def test_upload_by_name_uses_the_by_name_endpoint() -> None:
     )
 
     result = await secobserve_upload_file(
-        UploadInput(kind="observations", file_path="trivy.json", product_name="Portal", branch_name="release-2.1")
+        kind="observations", file_path="trivy.json", product_name="Portal", branch_name="release-2.1"
     )
 
     assert b'name="product_name"' in route.calls.last.request.content
@@ -343,21 +345,21 @@ async def test_upload_by_name_uses_the_by_name_endpoint() -> None:
 
 
 async def test_upload_requires_exactly_one_product_reference() -> None:
-    with pytest.raises(ValidationError, match="exactly one of product_id or product_name"):
-        UploadInput(kind="observations", file_path="x.json", product_id=1, product_name="Portal")
+    assert "exactly one of product_id or product_name" in await call(
+        "secobserve_upload_file", kind="observations", file_path="x.json", product_id=1, product_name="Portal"
+    )
 
 
 async def test_upload_rejects_mismatched_product_and_branch_reference() -> None:
-    with pytest.raises(ValidationError, match="branch_name goes with product_name"):
-        UploadInput(kind="observations", file_path="x.json", product_id=1, branch_name="main")
+    assert "branch_name goes with product_name" in await call(
+        "secobserve_upload_file", kind="observations", file_path="x.json", product_id=1, branch_name="main"
+    )
 
 
 async def test_writes_are_blocked_in_read_only_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(config.ENV_READ_ONLY, "true")
     config.get_config.cache_clear()
 
-    result = await secobserve_assess_observation(
-        AssessObservationInput(observation_id=1, status="Resolved", comment="c")
-    )
+    result = await call("secobserve_assess_observation", observation_id=1, status="Resolved", comment="c")
 
     assert "read-only mode" in result

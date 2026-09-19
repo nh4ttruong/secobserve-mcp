@@ -21,17 +21,11 @@ from typing import Any
 from secobserve_mcp import config
 from secobserve_mcp.formatting import ResponseFormat
 from secobserve_mcp.tools_crud import (
-    CreateInput,
-    ListInput,
-    UpdateInput,
     secobserve_create,
     secobserve_list,
     secobserve_update,
 )
 from secobserve_mcp.tools_workflows import (
-    AssessObservationInput,
-    RunPeriodicTaskInput,
-    UploadInput,
     secobserve_assess_observation,
     secobserve_run_periodic_task,
     secobserve_upload_file,
@@ -188,9 +182,7 @@ SBOM = {
 
 async def resource_id(resource: str, **filters: Any) -> int:
     items = json.loads(
-        await secobserve_list(
-            ListInput(resource=resource, filters=filters, page_size=100, response_format=ResponseFormat.JSON)
-        )
+        await secobserve_list(resource=resource, filters=filters, page_size=100, response_format=ResponseFormat.JSON)
     )["items"]
     if len(items) != 1:
         raise SystemExit(f"Expected exactly one {resource} for {filters}, got {len(items)}")
@@ -198,9 +190,7 @@ async def resource_id(resource: str, **filters: Any) -> int:
 
 
 async def main() -> int:
-    existing = json.loads(
-        await secobserve_list(ListInput(resource="products", page_size=1, response_format=ResponseFormat.JSON))
-    )
+    existing = json.loads(await secobserve_list(resource="products", page_size=1, response_format=ResponseFormat.JSON))
     if existing["total"]:
         print(f"Refusing to seed: the instance already has {existing['total']} products.", file=sys.stderr)
         return 1
@@ -208,11 +198,9 @@ async def main() -> int:
     group_id = int(
         json.loads(
             await secobserve_create(
-                CreateInput(
-                    resource="product_groups",
-                    data={"name": "Platform", "description": "Customer-facing platform."},
-                    response_format=ResponseFormat.JSON,
-                )
+                resource="product_groups",
+                data={"name": "Platform", "description": "Customer-facing platform."},
+                response_format=ResponseFormat.JSON,
             )
         )["id"]
     )
@@ -221,7 +209,7 @@ async def main() -> int:
         data = dict(spec)
         if spec["name"] != "Legacy Batch":
             data["product_group"] = group_id
-        await secobserve_create(CreateInput(resource="products", data=data, response_format=ResponseFormat.JSON))
+        await secobserve_create(resource="products", data=data, response_format=ResponseFormat.JSON)
         print(f"created product {spec['name']}")
 
     for product_name, branch_name, is_default in BRANCHES:
@@ -229,11 +217,9 @@ async def main() -> int:
         # The product-level counters and the security gate only count findings on the
         # branch flagged is_default_branch, so it has to be set here.
         await secobserve_create(
-            CreateInput(
-                resource="branches",
-                data={"product": product_id, "name": branch_name, "is_default_branch": is_default},
-                response_format=ResponseFormat.JSON,
-            )
+            resource="branches",
+            data={"product": product_id, "name": branch_name, "is_default_branch": is_default},
+            response_format=ResponseFormat.JSON,
         )
         print(f"created branch {product_name}/{branch_name}")
 
@@ -246,13 +232,11 @@ async def main() -> int:
         path.write_text(json.dumps(report, indent=2))
         product_id = await resource_id("product_names", name=product_name)
         result = await secobserve_upload_file(
-            UploadInput(
-                kind="observations",
-                file_path=path.name,
-                product_id=product_id,
-                # "main" exists on every product, so the branch lookup must be product-scoped.
-                branch_id=await resource_id("branch_names", name=branch_name, product=product_id),
-            )
+            kind="observations",
+            file_path=path.name,
+            product_id=product_id,
+            # "main" exists on every product, so the branch lookup must be product-scoped.
+            branch_id=await resource_id("branch_names", name=branch_name, product=product_id),
         )
         print(f"imported {product_name}/{branch_name}: {result.splitlines()[1].strip()}")
 
@@ -261,20 +245,16 @@ async def main() -> int:
     payments_id = await resource_id("product_names", name="Payments API")
     # Without a policy every component evaluates to "Unknown".
     await secobserve_update(
-        UpdateInput(
-            resource="products",
-            id=payments_id,
-            data={"license_policy": await resource_id("license_policies", name="Standard")},
-            response_format=ResponseFormat.JSON,
-        )
+        resource="products",
+        id=payments_id,
+        data={"license_policy": await resource_id("license_policies", name="Standard")},
+        response_format=ResponseFormat.JSON,
     )
     await secobserve_upload_file(
-        UploadInput(
-            kind="sbom",
-            file_path=sbom_path.name,
-            product_id=payments_id,
-            branch_id=await resource_id("branch_names", name="main", product=payments_id),
-        )
+        kind="sbom",
+        file_path=sbom_path.name,
+        product_id=payments_id,
+        branch_id=await resource_id("branch_names", name="main", product=payments_id),
     )
     print("imported SBOM for Payments API/main")
 
@@ -282,23 +262,21 @@ async def main() -> int:
         product_id = await resource_id("product_names", name=assessment["product"])
         matches = json.loads(
             await secobserve_list(
-                ListInput(
-                    resource="observations",
-                    filters={"product": product_id, "title": assessment["title"]},
-                    fields=["id", "branch_name"],
-                    page_size=100,
-                    response_format=ResponseFormat.JSON,
-                )
+                resource="observations",
+                filters={"product": product_id, "title": assessment["title"]},
+                fields=["id", "branch_name"],
+                page_size=100,
+                response_format=ResponseFormat.JSON,
             )
         )["items"]
         target = [m for m in matches if m["branch_name"] == assessment["branch"]]
         if len(target) != 1:
             raise SystemExit(f"Expected one observation titled {assessment['title']}, got {len(target)}")
         payload = {k: v for k, v in assessment.items() if k not in {"product", "branch", "title"}}
-        await secobserve_assess_observation(AssessObservationInput(observation_id=target[0]["id"], **payload))
+        await secobserve_assess_observation(observation_id=target[0]["id"], **payload)
         print(f"assessed {assessment['title']} -> {assessment['status']}")
 
-    await secobserve_run_periodic_task(RunPeriodicTaskInput(task="Calculate product metrics"))
+    await secobserve_run_periodic_task(task="Calculate product metrics")
     print("queued calculate_product_metrics")
 
     print("\nSeed complete. evaluation.xml answers are verified against exactly this dataset.")
