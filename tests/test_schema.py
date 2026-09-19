@@ -11,8 +11,6 @@ import respx
 
 from secobserve_mcp import schema
 from secobserve_mcp.tools_crud import (
-    DescribeResourceInput,
-    ListInput,
     secobserve_describe_resource,
     secobserve_list,
 )
@@ -75,9 +73,7 @@ async def test_describe_resolves_refs_unwraps_pagination_and_marks_required() ->
     schema._schema = None
     respx.get(f"{API}/oa3/schema/").mock(return_value=httpx.Response(200, json=SCHEMA))
 
-    described = json.loads(
-        await secobserve_describe_resource(DescribeResourceInput(resource="observations", include_detail_path=False))
-    )
+    described = json.loads(await secobserve_describe_resource(resource="observations", include_detail_path=False))
 
     get = described["operations"]["/observations/"]["GET"]
     severity = next(p for p in get["parameters"] if p["name"] == "current_severity")
@@ -98,8 +94,8 @@ async def test_schema_is_fetched_once_per_process() -> None:
     schema._schema = None
     route = respx.get(f"{API}/oa3/schema/").mock(return_value=httpx.Response(200, json=SCHEMA))
 
-    await secobserve_describe_resource(DescribeResourceInput(resource="observations"))
-    await secobserve_describe_resource(DescribeResourceInput(resource="products"))
+    await secobserve_describe_resource(resource="observations")
+    await secobserve_describe_resource(resource="products")
 
     assert route.call_count == 1
 
@@ -114,13 +110,13 @@ async def test_schema_is_refetched_once_the_ttl_passes(monkeypatch: pytest.Monke
     clock = {"now": 1000.0}
     monkeypatch.setattr(schema, "time", SimpleNamespace(monotonic=lambda: clock["now"]))
 
-    await secobserve_describe_resource(DescribeResourceInput(resource="observations"))
+    await secobserve_describe_resource(resource="observations")
     clock["now"] += schema.SCHEMA_TTL_SECONDS - 1
-    await secobserve_describe_resource(DescribeResourceInput(resource="products"))
+    await secobserve_describe_resource(resource="products")
     assert route.call_count == 1
 
     clock["now"] += 2
-    await secobserve_describe_resource(DescribeResourceInput(resource="products"))
+    await secobserve_describe_resource(resource="products")
     assert route.call_count == 2
 
 
@@ -129,7 +125,7 @@ async def test_missing_schema_entry_falls_back_to_the_static_catalogue() -> None
     schema._schema = None
     respx.get(f"{API}/oa3/schema/").mock(return_value=httpx.Response(200, json={"paths": {}}))
 
-    result = await secobserve_describe_resource(DescribeResourceInput(resource="products"))
+    result = await secobserve_describe_resource(resource="products")
 
     assert "Static catalogue" in result
     assert "security_gate_passed" in result
@@ -142,7 +138,7 @@ async def test_unknown_filter_is_rejected_instead_of_silently_ignored() -> None:
     respx.get(f"{API}/oa3/schema/").mock(return_value=httpx.Response(200, json=SCHEMA))
     listing = respx.get(f"{API}/observations/").mock(return_value=httpx.Response(200, json={"count": 0, "results": []}))
 
-    result = await secobserve_list(ListInput(resource="observations", filters={"vulnerability_id": "CVE-2021-44228"}))
+    result = await secobserve_list(resource="observations", filters={"vulnerability_id": "CVE-2021-44228"})
 
     assert "is not a filter" in result
     assert "current_severity" in result, "the error must name the filters that do exist"
@@ -155,7 +151,7 @@ async def test_known_filters_pass_through() -> None:
     respx.get(f"{API}/oa3/schema/").mock(return_value=httpx.Response(200, json=SCHEMA))
     listing = respx.get(f"{API}/observations/").mock(return_value=httpx.Response(200, json={"count": 0, "results": []}))
 
-    await secobserve_list(ListInput(resource="observations", filters={"product": 12}))
+    await secobserve_list(resource="observations", filters={"product": 12})
 
     assert listing.called
 
@@ -167,6 +163,6 @@ async def test_filters_pass_through_when_the_schema_is_unavailable() -> None:
     respx.get(f"{API}/oa3/schema/").mock(return_value=httpx.Response(503))
     listing = respx.get(f"{API}/observations/").mock(return_value=httpx.Response(200, json={"count": 0, "results": []}))
 
-    await secobserve_list(ListInput(resource="observations", filters={"anything": 1}))
+    await secobserve_list(resource="observations", filters={"anything": 1})
 
     assert listing.called

@@ -34,7 +34,7 @@ Do not expand into these without the user asking.
 - Entry point: `secobserve-mcp = secobserve_mcp.__main__:main`.
 - MCP: **SDK 2.x** (`mcp>=2.2,<3`). The class is `MCPServer` in `mcp.server.mcpserver`, **not** `FastMCP` — that name is the 1.x API and is gone.
 - HTTP: one `httpx.AsyncClient` shared for the process lifetime.
-- Validation: Pydantic v2, one input model per tool.
+- Validation: Pydantic v2 via `Annotated[..., Field(...)]` on each tool argument; the signature is the schema.
 - Tests: `pytest` + `pytest-asyncio` (`asyncio_mode = "auto"`) with `respx` mocking HTTP.
 - Lint/types: `ruff` (line-length 120) and `mypy --strict`.
 - Container: `Dockerfile` (two stages, `python:3.13-slim`, non-root), published to `ghcr.io/nh4ttruong/secobserve-mcp` by the release workflow. Defaults to HTTP on 0.0.0.0:8931 and serves `GET /healthz` — liveness only, it never calls SecObserve.
@@ -87,7 +87,9 @@ When the backend changes its contract, update `registry.py` and the matching tes
 - Only add a dedicated tool when an endpoint carries **a rule the agent cannot infer from the path**: required fields, a precondition, multipart bodies, or a side effect worth warning about. Otherwise `call_action` already covers it.
 - Tool names are always prefixed `secobserve_`, snake_case, and start with a verb or an action noun.
 - Every tool declares `name`, `title` and `annotations=ToolAnnotations(...)`. **Use the snake_case field names** (`read_only_hint`, `destructive_hint`, `idempotent_hint`, `open_world_hint`); the camelCase aliases work at runtime but fail `mypy --strict`.
-- Every tool takes exactly one `params` argument, a Pydantic model, and returns `str`.
+- Tool arguments are **flat**, each one `Annotated[T, Field(description=...)]`, and every tool returns `str`. There is no wrapper model: what the signature says is what the client sees.
+- `app.py` sets `extra="forbid"` on the SDK's `ArgModelBase` before any tool is registered. Without it the SDK drops unknown arguments in silence, so `filter=` instead of `filters=` would return an unfiltered list. Removing that line reopens the worst failure mode in this repository.
+- Cross-field rules live at the top of the tool body as `raise ValueError(...)`, which `@tool_errors` turns into text the agent can act on.
 - The docstring is the tool description the agent sees. It must carry: a one-line summary, Args with types and constraints, Returns with the schema of the JSON returned, Examples including "Don't use when", and Error Handling.
 - Every tool carries `@tool_errors` directly below `@mcp.tool(...)`.
 
@@ -256,7 +258,6 @@ A published version is permanent. PyPI does not allow re-uploading a version, so
 
 ## Known limitations
 
-- Input schemas nest arguments under `params`, following the single-Pydantic-model convention of the `mcp-builder` skill. Clients render flat arguments better, but changing it breaks the interface of every tool at once.
 - `registry.py` is a hand-written list and can fall behind when the backend adds resources. Filters and fields cannot drift, since they are read from the live schema, but **a new resource will not appear** until it is added by hand.
 - `secobserve_trigger_scan` and `secobserve_api_import` block until the backend finishes. A timeout does not cancel the work in flight; check `vulnerability_checks` rather than retrying blind.
 - No automated integration test runs in CI: verification against a real backend is still manual, via `--check` and `evals/seed.py`.

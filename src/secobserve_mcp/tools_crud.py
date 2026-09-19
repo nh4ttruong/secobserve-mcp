@@ -10,10 +10,10 @@ tools of their own in tools_workflows.
 from __future__ import annotations
 
 import json
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import Field
 
 from . import schema as schema_reader
 from .app import mcp
@@ -27,152 +27,10 @@ MAX_PAGE_SIZE = 100
 NAME_CONFIRMED_DELETES = {"products", "product_groups"}
 
 
-class _Base(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
-
-
-class ListResourcesInput(_Base):
-    """Input model for browsing the resource catalogue."""
-
-    contains: str | None = Field(
-        default=None,
-        description="Only list resources whose name or summary contains this text (e.g. 'license', 'vex').",
-        max_length=100,
-    )
-
-
-class DescribeResourceInput(_Base):
-    """Input model for describing one resource against the live OpenAPI schema."""
-
-    resource: str = Field(..., description="Resource name from secobserve_list_resources (e.g. 'observations').")
-    include_detail_path: bool = Field(
-        default=True,
-        description="Also describe the /{id}/ path (the fields returned by secobserve_get and accepted by update).",
-    )
-
-
-class ListInput(_Base):
-    """Input model for listing records of any resource."""
-
-    resource: str = Field(..., description="Resource name, e.g. 'observations', 'products', 'license_components'.")
-    filters: dict[str, Any] | None = Field(
-        default=None,
-        description=(
-            "Query parameters as accepted by the endpoint, e.g. "
-            "{'product': 12, 'current_status': ['Open', 'In review'], 'current_severity': 'Critical'}. "
-            "A list value is sent as a repeated parameter. Call secobserve_describe_resource for the exact names."
-        ),
-    )
-    search: str | None = Field(
-        default=None,
-        description="Free-text search, where the endpoint supports it (observations search their title).",
-        max_length=200,
-    )
-    ordering: str | None = Field(
-        default=None,
-        description="Sort field; prefix with '-' to reverse (e.g. '-current_severity', 'name').",
-        max_length=100,
-    )
-    page: int = Field(default=1, description="1-based page number.", ge=1)
-    page_size: int = Field(default=25, description="Records per page.", ge=1, le=MAX_PAGE_SIZE)
-    fields: list[str] | None = Field(
-        default=None,
-        description=(
-            "Override the default projection. Dotted paths read nested objects, e.g. 'product_data.name'. "
-            "Use ['*'] for every field the API returns -- expensive on observations (~100 columns per row)."
-        ),
-        max_length=60,
-    )
-    response_format: ResponseFormat = Field(
-        default=ResponseFormat.MARKDOWN,
-        description="'markdown' for reading, 'json' for further processing.",
-    )
-
-
-class GetInput(_Base):
-    """Input model for fetching one record by id."""
-
-    resource: str = Field(..., description="Resource name, e.g. 'observations'.")
-    id: int = Field(..., description="Numeric primary key of the record.", ge=1)
-    fields: list[str] | None = Field(
-        default=None,
-        description="Restrict the response to these fields (dotted paths allowed). Omit for the full record.",
-        max_length=60,
-    )
-    response_format: ResponseFormat = Field(default=ResponseFormat.MARKDOWN, description="Output format.")
-
-
-class CreateInput(_Base):
-    """Input model for creating a record."""
-
-    resource: str = Field(..., description="Resource name that supports create, e.g. 'products', 'branches'.")
-    data: dict[str, Any] = Field(
-        ...,
-        description="Request body. Call secobserve_describe_resource first for required fields and enums.",
-    )
-    response_format: ResponseFormat = Field(default=ResponseFormat.MARKDOWN, description="Output format.")
-
-
-class UpdateInput(_Base):
-    """Input model for updating a record."""
-
-    resource: str = Field(..., description="Resource name that supports update.")
-    id: int = Field(..., description="Numeric primary key of the record to update.", ge=1)
-    data: dict[str, Any] = Field(..., description="Fields to change.")
-    replace: bool = Field(
-        default=False,
-        description="False sends PATCH (merge, the safe default). True sends PUT and blanks omitted fields.",
-    )
-    response_format: ResponseFormat = Field(default=ResponseFormat.MARKDOWN, description="Output format.")
-
-
-class DeleteInput(_Base):
-    """Input model for deleting a record."""
-
-    resource: str = Field(..., description="Resource name that supports delete.")
-    id: int = Field(..., description="Numeric primary key of the record to delete.", ge=1)
-    confirm_name: str | None = Field(
-        default=None,
-        description=(
-            "Required for 'products' and 'product_groups': the record's exact name, case- and "
-            "whitespace-sensitive. The API rejects a mismatch, which is what makes the delete deliberate."
-        ),
-        max_length=255,
-    )
-
-
-class CallActionInput(_Base):
-    """Input model for invoking a named non-CRUD action."""
-
-    resource: str = Field(..., description="Resource the action belongs to, e.g. 'products', 'license_policies'.")
-    action: str = Field(..., description="Action name as listed by secobserve_list_resources, e.g. 'apply_rules'.")
-    id: int | None = Field(
-        default=None,
-        description="Record id. Required for detail actions, must be omitted for collection actions.",
-        ge=1,
-    )
-    body: dict[str, Any] | None = Field(default=None, description="JSON request body, for POST/PATCH actions.")
-    params: dict[str, Any] | None = Field(default=None, description="Query parameters, for GET actions.")
-    method: Literal["GET", "POST", "PATCH", "DELETE"] | None = Field(
-        default=None,
-        description="Override the action's default verb. Only 'product_notifications/override' needs this (POST or DELETE).",
-    )
-    filename: str | None = Field(
-        default=None,
-        description=(
-            "For export actions that return a file: the base filename to write into the export directory. "
-            "No directory separators. Defaults to '<resource>-<action>-<id>'."
-        ),
-        max_length=120,
-    )
-    response_format: ResponseFormat = Field(default=ResponseFormat.MARKDOWN, description="Output format.")
-
-    @field_validator("action")
-    @classmethod
-    def _no_path_parts(cls, value: str) -> str:
-        if "/" in value or ".." in value:
-            raise ValueError("action must be a bare action name, not a path")
-        return value
+#: Repeated verbatim on six tools; the wording is the same, so the alias is too.
+ResponseFormatArg = Annotated[
+    ResponseFormat, Field(description="'markdown' for reading, 'json' for further processing.")
+]
 
 
 def _require_op(resource_name: str, resource: Resource, op: str) -> None:
@@ -232,7 +90,15 @@ async def _reject_unknown_filters(resource_name: str, resource: Resource, filter
     ),
 )
 @tool_errors
-async def secobserve_list_resources(params: ListResourcesInput) -> str:
+async def secobserve_list_resources(
+    contains: Annotated[
+        str | None,
+        Field(
+            description="Only list resources whose name or summary contains this text (e.g. 'license', 'vex').",
+            max_length=100,
+        ),
+    ] = None,
+) -> str:
     """List every SecObserve resource this server can reach, with its verbs and named actions.
 
     Start here. The output is the vocabulary for secobserve_list / get / create /
@@ -256,7 +122,7 @@ async def secobserve_list_resources(params: ListResourcesInput) -> str:
           (use secobserve_describe_resource, which reads the live schema).
     """
     lines = ["# SecObserve resources", ""]
-    needle = (params.contains or "").lower()
+    needle = (contains or "").lower()
     shown = 0
 
     for name, resource in sorted(RESOURCES.items()):
@@ -276,7 +142,7 @@ async def secobserve_list_resources(params: ListResourcesInput) -> str:
         lines.append("")
 
     if not shown:
-        return f"No resource matches '{params.contains}'. Call without 'contains' to see all {len(RESOURCES)}."
+        return f"No resource matches '{contains}'. Call without 'contains' to see all {len(RESOURCES)}."
 
     lines.append("Endpoints outside the CRUD catalogue have dedicated tools: secobserve_status,")
     lines.append("secobserve_product_metrics, secobserve_assess_observation, secobserve_bulk_assess_observations,")
@@ -296,7 +162,17 @@ async def secobserve_list_resources(params: ListResourcesInput) -> str:
     ),
 )
 @tool_errors
-async def secobserve_describe_resource(params: DescribeResourceInput) -> str:
+async def secobserve_describe_resource(
+    resource: Annotated[str, Field(description="Resource name from secobserve_list_resources (e.g. 'observations').")],
+    include_detail_path: Annotated[
+        bool,
+        Field(
+            description=(
+                "Also describe the /{id}/ path (the fields returned by secobserve_get and accepted by update)."
+            )
+        ),
+    ] = True,
+) -> str:
     """Read the deployed instance's OpenAPI schema for one resource: filters, fields, enums.
 
     This is the authoritative answer to "what can I filter on" and "what does the
@@ -335,27 +211,28 @@ async def secobserve_describe_resource(params: DescribeResourceInput) -> str:
         If the instance does not serve the schema, says so and points at
         secobserve_list_resources for the static catalogue.
     """
-    resource = get_resource(params.resource)
-    described: dict[str, Any] = {f"{resource.path}": await schema_reader.describe_path(resource.path)}
-    if params.include_detail_path:
-        detail_path = f"{resource.path}{{id}}/"
+    resource_def = get_resource(resource)
+    described: dict[str, Any] = {f"{resource_def.path}": await schema_reader.describe_path(resource_def.path)}
+    if include_detail_path:
+        detail_path = f"{resource_def.path}{{id}}/"
         described[detail_path] = await schema_reader.describe_path(detail_path)
 
     if not any(described.values()):
         return (
-            f"The instance's OpenAPI schema has no entry for {resource.path}. "
-            f"Static catalogue: operations {', '.join(sorted(resource.ops))}; "
-            f"default list fields {', '.join(resource.list_fields) or 'all'}."
+            f"The instance's OpenAPI schema has no entry for {resource_def.path}. "
+            f"Static catalogue: operations {', '.join(sorted(resource_def.ops))}; "
+            f"default list fields {', '.join(resource_def.list_fields) or 'all'}."
         )
 
     return json.dumps(
         {
-            "resource": params.resource,
-            "path": resource.path,
-            "summary": resource.summary,
+            "resource": resource,
+            "path": resource_def.path,
+            "summary": resource_def.summary,
             "operations": {k: v for k, v in described.items() if v},
             "actions": [
-                {"name": a.name, "method": a.method, "detail": a.detail, "summary": a.summary} for a in resource.actions
+                {"name": a.name, "method": a.method, "detail": a.detail, "summary": a.summary}
+                for a in resource_def.actions
             ],
         },
         indent=2,
@@ -374,7 +251,46 @@ async def secobserve_describe_resource(params: DescribeResourceInput) -> str:
     ),
 )
 @tool_errors
-async def secobserve_list(params: ListInput) -> str:
+async def secobserve_list(
+    resource: Annotated[
+        str, Field(description="Resource name, e.g. 'observations', 'products', 'license_components'.")
+    ],
+    filters: Annotated[
+        dict[str, Any] | None,
+        Field(
+            description=(
+                "Query parameters as accepted by the endpoint, e.g. "
+                "{'product': 12, 'current_status': ['Open', 'In review'], 'current_severity': 'Critical'}. "
+                "A list value is sent as a repeated parameter. Call secobserve_describe_resource for the "
+                "exact names."
+            )
+        ),
+    ] = None,
+    search: Annotated[
+        str | None,
+        Field(
+            description="Free-text search, where the endpoint supports it (observations search their title).",
+            max_length=200,
+        ),
+    ] = None,
+    ordering: Annotated[
+        str | None,
+        Field(description="Sort field; prefix with '-' to reverse (e.g. '-current_severity', 'name').", max_length=100),
+    ] = None,
+    page: Annotated[int, Field(description="1-based page number.", ge=1)] = 1,
+    page_size: Annotated[int, Field(description="Records per page.", ge=1, le=MAX_PAGE_SIZE)] = 25,
+    fields: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                "Override the default projection. Dotted paths read nested objects, e.g. 'product_data.name'. "
+                "Use ['*'] for every field the API returns -- expensive on observations (~100 columns per row)."
+            ),
+            max_length=60,
+        ),
+    ] = None,
+    response_format: ResponseFormatArg = ResponseFormat.MARKDOWN,
+) -> str:
     """List records of any SecObserve resource, filtered, sorted, paginated and projected.
 
     Results are projected to a compact default field set per resource, because
@@ -425,32 +341,30 @@ async def secobserve_list(params: ListInput) -> str:
         Unknown filter -> the API's 400 body is returned verbatim, naming the field.
         Read-only mode does not affect this tool.
     """
-    resource = get_resource(params.resource)
-    _require_op(params.resource, resource, LIST)
+    resource_def = get_resource(resource)
+    _require_op(resource, resource_def, LIST)
 
-    await _reject_unknown_filters(params.resource, resource, params.filters)
+    await _reject_unknown_filters(resource, resource_def, filters)
 
-    query: dict[str, Any] = dict(params.filters or {})
-    query["page"] = params.page
-    query["page_size"] = params.page_size
-    if params.search:
-        query["search"] = params.search
-    if params.ordering:
-        query["ordering"] = params.ordering
+    query: dict[str, Any] = dict(filters or {})
+    query["page"] = page
+    query["page_size"] = page_size
+    if search:
+        query["search"] = search
+    if ordering:
+        query["ordering"] = ordering
 
-    payload = await request("GET", resource.path, params=query)
+    payload = await request("GET", resource_def.path, params=query)
     rows = payload.get("results", payload if isinstance(payload, list) else [])
-    fields, note = _resolve_fields(resource, params.fields)
-    items = [project(row, fields) for row in rows if isinstance(row, dict)]
+    projection, note = _resolve_fields(resource_def, fields)
+    items = [project(row, projection) for row in rows if isinstance(row, dict)]
 
     return render_items(
         items,
-        title=f"{params.resource} ({len(items)} shown)",
-        label=resource.label,
-        envelope=paging_envelope(
-            payload if isinstance(payload, dict) else {}, params.page, params.page_size, len(items)
-        ),
-        response_format=params.response_format,
+        title=f"{resource} ({len(items)} shown)",
+        label=resource_def.label,
+        envelope=paging_envelope(payload if isinstance(payload, dict) else {}, page, page_size, len(items)),
+        response_format=response_format,
         dropped_note=note,
     )
 
@@ -466,7 +380,18 @@ async def secobserve_list(params: ListInput) -> str:
     ),
 )
 @tool_errors
-async def secobserve_get(params: GetInput) -> str:
+async def secobserve_get(
+    resource: Annotated[str, Field(description="Resource name, e.g. 'observations'.")],
+    id: Annotated[int, Field(description="Numeric primary key of the record.", ge=1)],
+    fields: Annotated[
+        list[str] | None,
+        Field(
+            description=("Restrict the response to these fields (dotted paths allowed). Omit for the full record."),
+            max_length=60,
+        ),
+    ] = None,
+    response_format: ResponseFormatArg = ResponseFormat.MARKDOWN,
+) -> str:
     """Fetch one SecObserve record by id, with all its fields.
 
     Use after secobserve_list has narrowed things down: the detail serializer
@@ -496,15 +421,13 @@ async def secobserve_get(params: GetInput) -> str:
         404 means either no such id or no view permission on its product -- SecObserve
         hides records outside the token's products, and the error says so.
     """
-    resource = get_resource(params.resource)
-    _require_op(params.resource, resource, GET)
+    resource_def = get_resource(resource)
+    _require_op(resource, resource_def, GET)
 
-    payload = await request("GET", f"{resource.path}{params.id}/")
-    obj = project(payload, tuple(params.fields) if params.fields else None)
-    label = payload.get(resource.label) or payload.get("name") or params.id
-    return render_object(
-        obj, title=f"{params.resource} {label} (id {params.id})", response_format=params.response_format
-    )
+    payload = await request("GET", f"{resource_def.path}{id}/")
+    obj = project(payload, tuple(fields) if fields else None)
+    label = payload.get(resource_def.label) or payload.get("name") or id
+    return render_object(obj, title=f"{resource} {label} (id {id})", response_format=response_format)
 
 
 @mcp.tool(
@@ -518,7 +441,14 @@ async def secobserve_get(params: GetInput) -> str:
     ),
 )
 @tool_errors
-async def secobserve_create(params: CreateInput) -> str:
+async def secobserve_create(
+    resource: Annotated[str, Field(description="Resource name that supports create, e.g. 'products', 'branches'.")],
+    data: Annotated[
+        dict[str, Any],
+        Field(description="Request body. Call secobserve_describe_resource first for required fields and enums."),
+    ],
+    response_format: ResponseFormatArg = ResponseFormat.MARKDOWN,
+) -> str:
     """Create a record in SecObserve (product, branch, service, rule, policy, member, ...).
 
     Call secobserve_describe_resource for the resource first: SecObserve's
@@ -548,16 +478,16 @@ async def secobserve_create(params: CreateInput) -> str:
         when SECOBSERVE_READ_ONLY is set. 400 responses are returned with the
         field-level detail from the API.
     """
-    resource = get_resource(params.resource)
-    _require_op(params.resource, resource, CREATE)
+    resource_def = get_resource(resource)
+    _require_op(resource, resource_def, CREATE)
 
-    payload = await request("POST", resource.path, json_body=params.data)
+    payload = await request("POST", resource_def.path, json_body=data)
     if not isinstance(payload, dict):
-        return f"Created in {params.resource}. The API returned no body."
+        return f"Created in {resource}. The API returned no body."
     return render_object(
         payload,
-        title=f"Created {params.resource} id {payload.get('id', '?')}",
-        response_format=params.response_format,
+        title=f"Created {resource} id {payload.get('id', '?')}",
+        response_format=response_format,
     )
 
 
@@ -572,7 +502,16 @@ async def secobserve_create(params: CreateInput) -> str:
     ),
 )
 @tool_errors
-async def secobserve_update(params: UpdateInput) -> str:
+async def secobserve_update(
+    resource: Annotated[str, Field(description="Resource name that supports update.")],
+    id: Annotated[int, Field(description="Numeric primary key of the record to update.", ge=1)],
+    data: Annotated[dict[str, Any], Field(description="Fields to change.")],
+    replace: Annotated[
+        bool,
+        Field(description=("False sends PATCH (merge, the safe default). True sends PUT and blanks omitted fields.")),
+    ] = False,
+    response_format: ResponseFormatArg = ResponseFormat.MARKDOWN,
+) -> str:
     """Change fields of an existing SecObserve record.
 
     Defaults to PATCH so omitted fields keep their values; set replace=True only
@@ -604,17 +543,17 @@ async def secobserve_update(params: UpdateInput) -> str:
         Refused when the resource has no update operation or the server is read-only.
         400 responses carry the API's field-level validation detail.
     """
-    resource = get_resource(params.resource)
-    _require_op(params.resource, resource, UPDATE)
+    resource_def = get_resource(resource)
+    _require_op(resource, resource_def, UPDATE)
 
-    method = "PUT" if params.replace else "PATCH"
-    payload = await request(method, f"{resource.path}{params.id}/", json_body=params.data)
+    method = "PUT" if replace else "PATCH"
+    payload = await request(method, f"{resource_def.path}{id}/", json_body=data)
     if not isinstance(payload, dict):
-        return f"Updated {params.resource} {params.id}. The API returned no body."
+        return f"Updated {resource} {id}. The API returned no body."
     return render_object(
         payload,
-        title=f"Updated {params.resource} id {params.id}",
-        response_format=params.response_format,
+        title=f"Updated {resource} id {id}",
+        response_format=response_format,
     )
 
 
@@ -629,7 +568,20 @@ async def secobserve_update(params: UpdateInput) -> str:
     ),
 )
 @tool_errors
-async def secobserve_delete(params: DeleteInput) -> str:
+async def secobserve_delete(
+    resource: Annotated[str, Field(description="Resource name that supports delete.")],
+    id: Annotated[int, Field(description="Numeric primary key of the record to delete.", ge=1)],
+    confirm_name: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Required for 'products' and 'product_groups': the record's exact name, case- and "
+                "whitespace-sensitive. The API rejects a mismatch, which is what makes the delete deliberate."
+            ),
+            max_length=255,
+        ),
+    ] = None,
+) -> str:
     """Permanently delete a SecObserve record. Deletion cascades and cannot be undone.
 
     Deleting a product removes its branches, observations, license components,
@@ -668,22 +620,22 @@ async def secobserve_delete(params: DeleteInput) -> str:
             "Consider assessing observations as 'Not affected' or 'Risk accepted' instead."
         )
 
-    resource = get_resource(params.resource)
-    _require_op(params.resource, resource, DELETE)
+    resource_def = get_resource(resource)
+    _require_op(resource, resource_def, DELETE)
 
     query: dict[str, Any] = {}
-    if params.resource in NAME_CONFIRMED_DELETES:
-        if not params.confirm_name:
+    if resource in NAME_CONFIRMED_DELETES:
+        if not confirm_name:
             raise SecObserveError(
-                f"Deleting a {params.resource[:-1]} requires confirm_name to equal its exact name "
+                f"Deleting a {resource[:-1]} requires confirm_name to equal its exact name "
                 f"(case- and whitespace-sensitive). Read it with secobserve_get "
-                f"(resource='{params.resource}', id={params.id}) and confirm with the user first -- "
+                f"(resource='{resource}', id={id}) and confirm with the user first -- "
                 "this deletes all dependent data."
             )
-        query["name"] = params.confirm_name
+        query["name"] = confirm_name
 
-    await request("DELETE", f"{resource.path}{params.id}/", params=query or None)
-    return f"Deleted {params.resource} id {params.id}. This cascaded to dependent data and cannot be undone."
+    await request("DELETE", f"{resource_def.path}{id}/", params=query or None)
+    return f"Deleted {resource} id {id}. This cascaded to dependent data and cannot be undone."
 
 
 @mcp.tool(
@@ -697,7 +649,37 @@ async def secobserve_delete(params: DeleteInput) -> str:
     ),
 )
 @tool_errors
-async def secobserve_call_action(params: CallActionInput) -> str:
+async def secobserve_call_action(
+    resource: Annotated[str, Field(description="Resource the action belongs to, e.g. 'products', 'license_policies'.")],
+    action: Annotated[
+        str, Field(description="Action name as listed by secobserve_list_resources, e.g. 'apply_rules'.")
+    ],
+    id: Annotated[
+        int | None,
+        Field(description="Record id. Required for detail actions, must be omitted for collection actions.", ge=1),
+    ] = None,
+    body: Annotated[dict[str, Any] | None, Field(description="JSON request body, for POST/PATCH actions.")] = None,
+    params: Annotated[dict[str, Any] | None, Field(description="Query parameters, for GET actions.")] = None,
+    method: Annotated[
+        Literal["GET", "POST", "PATCH", "DELETE"] | None,
+        Field(
+            description=(
+                "Override the action's default verb. Only 'product_notifications/override' needs this (POST or DELETE)."
+            )
+        ),
+    ] = None,
+    filename: Annotated[
+        str | None,
+        Field(
+            description=(
+                "For export actions that return a file: the base filename to write into the export directory. "
+                "No directory separators. Defaults to '<resource>-<action>-<id>'."
+            ),
+            max_length=120,
+        ),
+    ] = None,
+    response_format: ResponseFormatArg = ResponseFormat.MARKDOWN,
+) -> str:
     """Invoke a named non-CRUD action on a resource (apply_rules, copy, simulate, exports, ...).
 
     This is the escape hatch for the long tail of SecObserve endpoints that are
@@ -741,42 +723,44 @@ async def secobserve_call_action(params: CallActionInput) -> str:
         stray id -> error saying which the action needs. Read-only mode blocks
         every non-GET action.
     """
-    resource = get_resource(params.resource)
-    action = resource.action(params.action)
-    if action is None:
-        available = ", ".join(a.name for a in resource.actions) or "none"
-        raise SecObserveError(f"Resource '{params.resource}' has no action '{params.action}'. Available: {available}.")
+    resource_def = get_resource(resource)
+    action_def = resource_def.action(action)
+    if action_def is None:
+        available = ", ".join(a.name for a in resource_def.actions) or "none"
+        raise SecObserveError(f"Resource '{resource}' has no action '{action}'. Available: {available}.")
 
-    if action.detail and params.id is None:
-        raise SecObserveError(f"Action '{action.name}' works on one record: pass its id.")
-    if not action.detail and params.id is not None:
-        raise SecObserveError(f"Action '{action.name}' works on the collection: omit id.")
+    if action_def.detail and id is None:
+        raise SecObserveError(f"Action '{action_def.name}' works on one record: pass its id.")
+    if not action_def.detail and id is not None:
+        raise SecObserveError(f"Action '{action_def.name}' works on the collection: omit id.")
 
-    path = f"{resource.path}{params.id}/{action.name}/" if action.detail else f"{resource.path}{action.name}/"
-    method = params.method or action.method
+    path = (
+        f"{resource_def.path}{id}/{action_def.name}/" if action_def.detail else f"{resource_def.path}{action_def.name}/"
+    )
+    verb = method or action_def.method
 
     payload = await request(
-        method,
+        verb,
         path,
-        params=params.params,
-        json_body=params.body,
-        expect_binary=action.binary,
+        params=params,
+        json_body=body,
+        expect_binary=action_def.binary,
     )
 
-    if action.binary:
-        base = params.filename or f"{params.resource}-{action.name}{f'-{params.id}' if params.id else ''}"
-        return write_export(base, action.name, payload or b"")
+    if action_def.binary:
+        base = filename or f"{resource}-{action_def.name}{f'-{id}' if id else ''}"
+        return write_export(base, action_def.name, payload or b"")
 
     if payload is None:
-        return f"{method} {path} accepted. The API returned no body."
+        return f"{verb} {path} accepted. The API returned no body."
     if isinstance(payload, list):
         return render_items(
             [row for row in payload if isinstance(row, dict)],
-            title=f"{params.resource}.{action.name}",
-            label=resource.label,
+            title=f"{resource}.{action_def.name}",
+            label=resource_def.label,
             envelope={"total": len(payload), "count": len(payload)},
-            response_format=params.response_format,
+            response_format=response_format,
         )
     if isinstance(payload, dict):
-        return render_object(payload, title=f"{params.resource}.{action.name}", response_format=params.response_format)
+        return render_object(payload, title=f"{resource}.{action_def.name}", response_format=response_format)
     return str(payload)

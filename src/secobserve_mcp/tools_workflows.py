@@ -10,10 +10,10 @@ that in the schema and the docstring turns a class of 400s into a schema error.
 from __future__ import annotations
 
 import json
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import Field
 
 from .app import mcp
 from .client import SecObserveError, request, tool_errors
@@ -24,367 +24,72 @@ from .types import ApprovalStatus, MetricsAge, Severity, Status, VexJustificatio
 MAX_BULK = 250
 
 
-class _Base(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
-
-
-class AssessmentFields(_Base):
-    """The severity/status/priority/VEX changes an assessment may carry."""
-
-    severity: Severity | None = Field(default=None, description="New severity. Omit to leave it as it is.")
-    status: Status | None = Field(default=None, description="New status. Omit to leave it as it is.")
-    priority: int | None = Field(
-        default=None,
-        description="New priority, 1 (most urgent) to 99. Send null to clear a priority.",
-        ge=1,
-        le=99,
-    )
-    vex_justification: VexJustification | None = Field(
-        default=None,
+SeverityArg = Annotated[Severity | None, Field(description="New severity. Omit to leave it as it is.")]
+StatusArg = Annotated[Status | None, Field(description="New status. Omit to leave it as it is.")]
+PriorityArg = Annotated[
+    int | None, Field(description="New priority, 1 (most urgent) to 99. Use clear_priority to remove one.", ge=1, le=99)
+]
+ClearPriorityArg = Annotated[bool, Field(description="Remove the existing priority. Cannot be combined with priority.")]
+VexJustificationArg = Annotated[
+    VexJustification | None,
+    Field(
         description=(
-            "Why the finding does not apply. Expected with status 'Not affected' or "
-            "'False positive' so that generated VEX documents carry a machine-readable reason."
-        ),
-    )
-    risk_acceptance_expiry_date: str | None = Field(
-        default=None,
+            "Why the finding does not apply. Expected with status 'Not affected' or 'False positive' so that "
+            "generated VEX documents carry a machine-readable reason."
+        )
+    ),
+]
+RiskExpiryArg = Annotated[
+    str | None,
+    Field(
         description="ISO date (YYYY-MM-DD) when a 'Risk accepted' status lapses back to open.",
         pattern=r"^\d{4}-\d{2}-\d{2}$",
-    )
-    comment: str = Field(
-        ...,
+    ),
+]
+CommentArg = Annotated[
+    str,
+    Field(
         description=(
-            "Why this assessment was made. Mandatory -- it is the audit record, and "
-            "approvers see only this. State the evidence, not just the verdict."
+            "Why this assessment was made. Mandatory -- it is the audit record, and approvers see only this. "
+            "State the evidence, not just the verdict."
         ),
         min_length=1,
         max_length=4096,
-    )
-
-    def payload(self) -> dict[str, Any]:
-        """Body for the assessment endpoints, dropping untouched fields.
-
-        'priority' is kept when explicitly set to None, because the API reads a
-        present-but-null priority as "clear it" and an absent key as "leave it".
-        """
-        body: dict[str, Any] = {"comment": self.comment}
-        if self.severity is not None:
-            body["severity"] = self.severity.value
-        if self.status is not None:
-            body["status"] = self.status.value
-        if self.vex_justification is not None:
-            body["vex_justification"] = self.vex_justification.value
-        if self.risk_acceptance_expiry_date is not None:
-            body["risk_acceptance_expiry_date"] = self.risk_acceptance_expiry_date
-        if "priority" in self.model_fields_set:
-            body["priority"] = self.priority
-        return body
-
-    @model_validator(mode="after")
-    def _something_to_do(self) -> AssessmentFields:
-        changed = {"severity", "status", "priority", "vex_justification", "risk_acceptance_expiry_date"}
-        if not (changed & self.model_fields_set):
-            raise ValueError(
-                "An assessment must change at least one of severity, status, priority, "
-                "vex_justification or risk_acceptance_expiry_date. To record a comment "
-                "without a change there is nothing to submit."
-            )
-        return self
+    ),
+]
 
 
-class AssessObservationInput(AssessmentFields):
-    """Input model for assessing one observation."""
+def _assessment_payload(
+    comment: str,
+    severity: Severity | None,
+    status: Status | None,
+    priority: int | None,
+    clear_priority: bool,
+    vex_justification: VexJustification | None,
+    risk_acceptance_expiry_date: str | None,
+) -> dict[str, Any]:
+    if priority is not None and clear_priority:
+        raise ValueError("Give priority or clear_priority, not both.")
+    if not any((severity, status, priority, clear_priority, vex_justification, risk_acceptance_expiry_date)):
+        raise ValueError(
+            "An assessment must change at least one of severity, status, priority, clear_priority, "
+            "vex_justification or risk_acceptance_expiry_date. To record a comment without a change "
+            "there is nothing to submit."
+        )
 
-    observation_id: int = Field(..., description="Id of the observation to assess.", ge=1)
-
-
-class BulkAssessInput(AssessmentFields):
-    """Input model for assessing many observations at once."""
-
-    observation_ids: list[int] = Field(
-        ...,
-        description=f"Ids to assess, 1 to {MAX_BULK} per call. Every id gets the same assessment.",
-        min_length=1,
-        max_length=MAX_BULK,
-    )
-    product_id: int | None = Field(
-        default=None,
-        description=(
-            "Scope the call to one product's endpoint. Omit for the instance-wide endpoint. "
-            "Pass it when the token is a product API token, which cannot use the instance-wide one."
-        ),
-        ge=1,
-    )
-
-
-class ApproveInput(_Base):
-    """Input model for approving or rejecting pending assessments."""
-
-    observation_log_ids: list[int] = Field(
-        ...,
-        description=(
-            f"Observation log ids awaiting approval, 1 to {MAX_BULK}. Find them with "
-            "secobserve_list(resource='observation_logs', filters={'assessment_status': 'Needs approval'})."
-        ),
-        min_length=1,
-        max_length=MAX_BULK,
-    )
-    assessment_status: ApprovalStatus = Field(
-        ...,
-        description=(
-            "'Approved' accepts the assessment as submitted, 'Approved with edits' accepts it with "
-            "the observation_log_* overrides below, 'Rejected' discards it."
-        ),
-    )
-    rejection_remark: str | None = Field(
-        default=None,
-        description="Why the assessment was rejected. Required when assessment_status is 'Rejected'.",
-        max_length=255,
-    )
-    observation_log_comment: str | None = Field(
-        default=None,
-        description="Replacement comment, only with 'Approved with edits'.",
-        max_length=4096,
-    )
-    observation_log_vex_justification: VexJustification | None = Field(
-        default=None,
-        description="Replacement VEX justification, only with 'Approved with edits' and a single id.",
-    )
-
-    @model_validator(mode="after")
-    def _remark_required_for_rejection(self) -> ApproveInput:
-        if self.assessment_status is ApprovalStatus.REJECTED and not self.rejection_remark:
-            raise ValueError("Rejecting an assessment requires rejection_remark so the submitter knows why.")
-        return self
-
-
-class MetricsInput(_Base):
-    """Input model for reading product metrics."""
-
-    kind: Literal["current", "timeline", "status"] = Field(
-        ...,
-        description=(
-            "'current' = severity and license counts as of the last calculation; "
-            "'timeline' = one entry per day; 'status' = when metrics were last calculated "
-            "and how often, which tells you how stale 'current' is."
-        ),
-    )
-    product_id: int | None = Field(
-        default=None,
-        description=(
-            "Restrict to one product, or to every product in a product group when the id is a group. "
-            "Omit for the whole instance."
-        ),
-        ge=1,
-    )
-    age: MetricsAge | None = Field(
-        default=None,
-        description="Time window, for kind='timeline' only. Omit for the full retained history.",
-    )
-    response_format: ResponseFormat = Field(default=ResponseFormat.JSON, description="Output format.")
-
-
-class UploadInput(_Base):
-    """Input model for importing a local scan report, SBOM or VEX document."""
-
-    kind: Literal["observations", "sbom", "vex"] = Field(
-        ...,
-        description=(
-            "'observations' = a scanner report (Trivy, Grype, Semgrep, ZAP, ...); "
-            "'sbom' = a CycloneDX or SPDX SBOM, which creates license components; "
-            "'vex' = a third-party VEX document whose statements assess existing observations."
-        ),
-    )
-    file_path: str = Field(
-        ...,
-        description="Path to the file, absolute or relative to the server's import directory.",
-        min_length=1,
-    )
-    product_id: int | None = Field(default=None, description="Target product by id. Give this or product_name.", ge=1)
-    product_name: str | None = Field(
-        default=None,
-        description="Target product by exact name. The by-name endpoints can create the branch on the fly.",
-        max_length=255,
-    )
-    branch_id: int | None = Field(default=None, description="Target branch by id, with product_id.", ge=1)
-    branch_name: str | None = Field(
-        default=None,
-        description="Target branch by name; created if missing. Use with product_name.",
-        max_length=255,
-    )
-    service: str | None = Field(default=None, description="Service name to attach the findings to.", max_length=255)
-    suppress_licenses: bool | None = Field(
-        default=None,
-        description="For kind='observations': skip license component extraction from the report.",
-    )
-    docker_image_name_tag: str | None = Field(
-        default=None,
-        description="Origin metadata: the scanned image, e.g. 'registry/app:1.2.3'.",
-        max_length=513,
-    )
-    endpoint_url: str | None = Field(
-        default=None,
-        description="Origin metadata: the scanned URL, for DAST reports.",
-        max_length=2048,
-    )
-    kubernetes_cluster: str | None = Field(default=None, description="Origin metadata: cluster.", max_length=255)
-    kubernetes_namespace: str | None = Field(default=None, description="Origin metadata: namespace.", max_length=255)
-
-    @model_validator(mode="after")
-    def _one_target(self) -> UploadInput:
-        if self.kind == "vex":
-            return self
-        if bool(self.product_id) == bool(self.product_name):
-            raise ValueError("Give exactly one of product_id or product_name.")
-        if self.product_id and self.branch_name:
-            raise ValueError("branch_name goes with product_name; with product_id use branch_id.")
-        if self.product_name and self.branch_id:
-            raise ValueError("branch_id goes with product_id; with product_name use branch_name.")
-        return self
-
-
-class ApiImportInput(_Base):
-    """Input model for pulling findings from a configured upstream API."""
-
-    api_configuration_id: int | None = Field(
-        default=None,
-        description="Id of the API configuration to pull from. Give this or api_configuration_name.",
-        ge=1,
-    )
-    api_configuration_name: str | None = Field(
-        default=None,
-        description="Name of the API configuration to pull from.",
-        max_length=255,
-    )
-    branch_id: int | None = Field(default=None, description="Target branch by id, with the id form.", ge=1)
-    branch_name: str | None = Field(
-        default=None,
-        description="Target branch by name, with the name form; created if missing.",
-        max_length=255,
-    )
-    service: str | None = Field(default=None, description="Service name to attach the findings to.", max_length=255)
-    docker_image_name_tag: str | None = Field(default=None, description="Origin metadata: image.", max_length=513)
-    endpoint_url: str | None = Field(default=None, description="Origin metadata: URL.", max_length=2048)
-
-    @model_validator(mode="after")
-    def _one_configuration(self) -> ApiImportInput:
-        if bool(self.api_configuration_id) == bool(self.api_configuration_name):
-            raise ValueError("Give exactly one of api_configuration_id or api_configuration_name.")
-        return self
-
-
-class TriggerScanInput(_Base):
-    """Input model for running a built-in scanner."""
-
-    scanner: Literal["osv", "vulnerablecode"] = Field(
-        ...,
-        description=(
-            "'osv' queries osv.dev for the product's known components; 'vulnerablecode' queries a "
-            "configured VulnerableCode instance. Each must be enabled on the product first."
-        ),
-    )
-    product_id: int = Field(..., description="Product to scan.", ge=1)
-    branch_id: int | None = Field(
-        default=None,
-        description="Scan one branch only. Omit to scan every branch of the product.",
-        ge=1,
-    )
-
-
-class RunPeriodicTaskInput(_Base):
-    """Input model for triggering a background task."""
-
-    task: str | None = Field(
-        default=None,
-        description=("Registered task name. Omit to list the names this instance accepts instead of running anything."),
-        max_length=100,
-    )
-
-
-class StatusInput(_Base):
-    """Input model for reading instance status."""
-
-    kind: Literal["version", "health", "settings", "background_tasks", "purl_types"] = Field(
-        ...,
-        description=(
-            "'version' = SecObserve version; 'health' = liveness; 'settings' = the feature flags and "
-            "intervals this instance exposes publicly; 'background_tasks' = queue statistics (superuser); "
-            "'purl_types' = the package-URL types known to the instance."
-        ),
-    )
-    product_id: int | None = Field(
-        default=None,
-        description="Required for kind='purl_types': the product whose package-URL types to read.",
-        ge=1,
-    )
-    purl_type: str | None = Field(
-        default=None,
-        description="With kind='purl_types': look up one type (e.g. 'maven') instead of listing all.",
-        max_length=50,
-    )
-
-    @model_validator(mode="after")
-    def _purl_types_need_a_product(self) -> StatusInput:
-        if self.kind == "purl_types" and not self.product_id:
-            raise ValueError("kind='purl_types' needs product_id; the endpoint reports 404 without it.")
-        return self
-
-
-class VexDocumentInput(_Base):
-    """Input model for generating or revising a VEX document."""
-
-    format: Literal["csaf", "openvex", "cyclonedx"] = Field(..., description="VEX document format to generate.")
-    document_id_prefix: str | None = Field(
-        default=None,
-        description="Prefix of the document id. Required when creating, and to identify the document when updating.",
-        max_length=200,
-    )
-    document_base_id: str | None = Field(
-        default=None,
-        description="The generated base id. Required only when updating an existing document.",
-        max_length=200,
-    )
-    product_id: int | None = Field(
-        default=None,
-        description="Cover one product. Give product_id or vulnerability_names (or both) when creating.",
-        ge=1,
-    )
-    vulnerability_names: list[str] | None = Field(
-        default=None,
-        description="Cover these vulnerabilities across products, e.g. ['CVE-2024-3094'].",
-        max_length=20,
-    )
-    branch_ids: list[int] | None = Field(
-        default=None,
-        description="Restrict to these branches of the product.",
-        max_length=20,
-    )
-    fields: dict[str, Any] | None = Field(
-        default=None,
-        description=(
-            "Format-specific fields. CSAF create needs title, publisher_name, publisher_category, "
-            "publisher_namespace, tracking_status, tlp_label; OpenVEX needs id_namespace and author; "
-            "CycloneDX takes author and manufacturer. Read the exact set with "
-            "secobserve_describe_resource on the matching vex_* resource, or from /api/oa3/swagger-ui."
-        ),
-    )
-    filename: str | None = Field(
-        default=None,
-        description="Base filename for the generated document. No directory separators.",
-        max_length=120,
-    )
-
-    @model_validator(mode="after")
-    def _scope_given(self) -> VexDocumentInput:
-        updating = bool(self.document_base_id)
-        if updating and not self.document_id_prefix:
-            raise ValueError("Updating a document needs both document_id_prefix and document_base_id.")
-        if not updating:
-            if not self.document_id_prefix:
-                raise ValueError("Creating a document needs document_id_prefix.")
-            if not self.product_id and not self.vulnerability_names:
-                raise ValueError("Creating a document needs product_id, vulnerability_names, or both.")
-        return self
+    body: dict[str, Any] = {"comment": comment}
+    if severity is not None:
+        body["severity"] = severity.value
+    if status is not None:
+        body["status"] = status.value
+    if vex_justification is not None:
+        body["vex_justification"] = vex_justification.value
+    if risk_acceptance_expiry_date is not None:
+        body["risk_acceptance_expiry_date"] = risk_acceptance_expiry_date
+    # An absent key leaves the priority alone; a present null clears it.
+    if priority is not None or clear_priority:
+        body["priority"] = priority
+    return body
 
 
 def _summarise_import(payload: Any, what: str) -> str:
@@ -405,7 +110,16 @@ def _summarise_import(payload: Any, what: str) -> str:
     ),
 )
 @tool_errors
-async def secobserve_assess_observation(params: AssessObservationInput) -> str:
+async def secobserve_assess_observation(
+    observation_id: Annotated[int, Field(description="Id of the observation to assess.", ge=1)],
+    comment: CommentArg,
+    severity: SeverityArg = None,
+    status: StatusArg = None,
+    priority: PriorityArg = None,
+    clear_priority: ClearPriorityArg = False,
+    vex_justification: VexJustificationArg = None,
+    risk_acceptance_expiry_date: RiskExpiryArg = None,
+) -> str:
     """Record a human assessment on one observation: change its severity, status, priority or VEX justification.
 
     This is how triage is done. It writes an observation log, so the change is
@@ -450,13 +164,16 @@ async def secobserve_assess_observation(params: AssessObservationInput) -> str:
         403 means the token lacks Observation_Assessment on that product.
         The schema refuses a call that would change nothing.
     """
-    await request("PATCH", f"/observations/{params.observation_id}/assessment/", json_body=params.payload())
-    changed = ", ".join(k for k in params.payload() if k != "comment") or "nothing"
+    body = _assessment_payload(
+        comment, severity, status, priority, clear_priority, vex_justification, risk_acceptance_expiry_date
+    )
+    await request("PATCH", f"/observations/{observation_id}/assessment/", json_body=body)
+    changed = ", ".join(k for k in body if k != "comment") or "nothing"
     return (
-        f"Assessed observation {params.observation_id} ({changed}). "
+        f"Assessed observation {observation_id} ({changed}). "
         "If this instance requires four-eyes approval, the assessment is now in 'Needs approval' -- "
         "check with secobserve_list(resource='observation_logs', "
-        f"filters={{'observation': {params.observation_id}}})."
+        f"filters={{'observation': {observation_id}}})."
     )
 
 
@@ -471,7 +188,33 @@ async def secobserve_assess_observation(params: AssessObservationInput) -> str:
     ),
 )
 @tool_errors
-async def secobserve_bulk_assess_observations(params: BulkAssessInput) -> str:
+async def secobserve_bulk_assess_observations(
+    observation_ids: Annotated[
+        list[int],
+        Field(
+            description=f"Ids to assess, 1 to {MAX_BULK} per call. Every id gets the same assessment.",
+            min_length=1,
+            max_length=MAX_BULK,
+        ),
+    ],
+    comment: CommentArg,
+    product_id: Annotated[
+        int | None,
+        Field(
+            description=(
+                "Scope the call to one product's endpoint. Omit for the instance-wide endpoint. "
+                "Pass it when the token is a product API token, which cannot use the instance-wide one."
+            ),
+            ge=1,
+        ),
+    ] = None,
+    severity: SeverityArg = None,
+    status: StatusArg = None,
+    priority: PriorityArg = None,
+    clear_priority: ClearPriorityArg = False,
+    vex_justification: VexJustificationArg = None,
+    risk_acceptance_expiry_date: RiskExpiryArg = None,
+) -> str:
     """Apply one identical assessment to up to 250 observations by id.
 
     The comment is stored on every one of them, so write it to be true of the whole
@@ -505,18 +248,20 @@ async def secobserve_bulk_assess_observations(params: BulkAssessInput) -> str:
         Observation_Assessment on one of the products involved -- narrow with
         product_id. Read-only mode blocks the call.
     """
-    body = params.payload()
-    if params.product_id:
-        body["observations"] = params.observation_ids
-        path = f"/products/{params.product_id}/observations_bulk_assessment/"
+    body = _assessment_payload(
+        comment, severity, status, priority, clear_priority, vex_justification, risk_acceptance_expiry_date
+    )
+    if product_id:
+        body["observations"] = observation_ids
+        path = f"/products/{product_id}/observations_bulk_assessment/"
     else:
-        body["observations"] = params.observation_ids
+        body["observations"] = observation_ids
         path = "/observations/bulk_assessment/"
 
     await request("POST", path, json_body=body)
     changed = ", ".join(k for k in body if k not in {"comment", "observations"}) or "nothing"
     return (
-        f"Submitted a bulk assessment for {len(params.observation_ids)} observations ({changed}) via {path}. "
+        f"Submitted a bulk assessment for {len(observation_ids)} observations ({changed}) via {path}. "
         "Observations whose previous assessment still needs approval are skipped by the backend; "
         "re-list them to confirm."
     )
@@ -533,7 +278,43 @@ async def secobserve_bulk_assess_observations(params: BulkAssessInput) -> str:
     ),
 )
 @tool_errors
-async def secobserve_approve_observation_log(params: ApproveInput) -> str:
+async def secobserve_approve_observation_log(
+    observation_log_ids: Annotated[
+        list[int],
+        Field(
+            description=(
+                f"Observation log ids awaiting approval, 1 to {MAX_BULK}. Find them with "
+                "secobserve_list(resource='observation_logs', filters={'assessment_status': 'Needs approval'})."
+            ),
+            min_length=1,
+            max_length=MAX_BULK,
+        ),
+    ],
+    assessment_status: Annotated[
+        ApprovalStatus,
+        Field(
+            description=(
+                "'Approved' accepts the assessment as submitted, 'Approved with edits' accepts it with "
+                "the observation_log_* overrides below, 'Rejected' discards it."
+            )
+        ),
+    ],
+    rejection_remark: Annotated[
+        str | None,
+        Field(
+            description="Why the assessment was rejected. Required when assessment_status is 'Rejected'.",
+            max_length=255,
+        ),
+    ] = None,
+    observation_log_comment: Annotated[
+        str | None,
+        Field(description="Replacement comment, only with 'Approved with edits'.", max_length=4096),
+    ] = None,
+    observation_log_vex_justification: Annotated[
+        VexJustification | None,
+        Field(description="Replacement VEX justification, only with 'Approved with edits' and a single id."),
+    ] = None,
+) -> str:
     """Approve or reject assessments waiting in 'Needs approval' (the four-eyes workflow).
 
     Only an approver other than the submitter can clear a pending assessment, and
@@ -568,28 +349,30 @@ async def secobserve_approve_observation_log(params: ApproveInput) -> str:
         403 means the token may not approve, or is the submitter's own -- SecObserve
         refuses self-approval. 400 means the log is not in 'Needs approval' any more.
     """
-    body: dict[str, Any] = {"assessment_status": params.assessment_status.value}
-    if params.rejection_remark:
-        body["rejection_remark"] = params.rejection_remark
-    if params.observation_log_comment:
-        body["observation_log_comment"] = params.observation_log_comment
-    if params.observation_log_vex_justification:
-        body["observation_log_vex_justification"] = params.observation_log_vex_justification.value
+    if assessment_status is ApprovalStatus.REJECTED and not rejection_remark:
+        raise ValueError("Rejecting an assessment requires rejection_remark so the submitter knows why.")
+    body: dict[str, Any] = {"assessment_status": assessment_status.value}
+    if rejection_remark:
+        body["rejection_remark"] = rejection_remark
+    if observation_log_comment:
+        body["observation_log_comment"] = observation_log_comment
+    if observation_log_vex_justification:
+        body["observation_log_vex_justification"] = observation_log_vex_justification.value
 
-    if len(params.observation_log_ids) == 1:
-        log_id = params.observation_log_ids[0]
+    if len(observation_log_ids) == 1:
+        log_id = observation_log_ids[0]
         await request("PATCH", f"/observation_logs/{log_id}/approval/", json_body=body)
-        return f"Recorded '{params.assessment_status.value}' on observation log {log_id}."
+        return f"Recorded '{assessment_status.value}' on observation log {log_id}."
 
-    if params.observation_log_vex_justification:
+    if observation_log_vex_justification:
         raise SecObserveError(
             "observation_log_vex_justification applies to a single assessment. "
             "Call this tool once per log, or drop the justification override."
         )
-    body["observation_logs"] = params.observation_log_ids
+    body["observation_logs"] = observation_log_ids
     await request("POST", "/observation_logs/bulk_approval/", json_body=body)
     return (
-        f"Recorded '{params.assessment_status.value}' on {len(params.observation_log_ids)} observation logs. "
+        f"Recorded '{assessment_status.value}' on {len(observation_log_ids)} observation logs. "
         "Logs that were no longer pending are skipped by the backend."
     )
 
@@ -605,7 +388,33 @@ async def secobserve_approve_observation_log(params: ApproveInput) -> str:
     ),
 )
 @tool_errors
-async def secobserve_product_metrics(params: MetricsInput) -> str:
+async def secobserve_product_metrics(
+    kind: Annotated[
+        Literal["current", "timeline", "status"],
+        Field(
+            description=(
+                "'current' = severity and license counts as of the last calculation; "
+                "'timeline' = one entry per day; 'status' = when metrics were last calculated "
+                "and how often, which tells you how stale 'current' is."
+            )
+        ),
+    ],
+    product_id: Annotated[
+        int | None,
+        Field(
+            description=(
+                "Restrict to one product, or to every product in a product group when the id is a group. "
+                "Omit for the whole instance."
+            ),
+            ge=1,
+        ),
+    ] = None,
+    age: Annotated[
+        MetricsAge | None,
+        Field(description="Time window, for kind='timeline' only. Omit for the full retained history."),
+    ] = None,
+    response_format: Annotated[ResponseFormat, Field(description="Output format.")] = ResponseFormat.JSON,
+) -> str:
     """Read pre-aggregated observation and license counts for a product, a group, or the whole instance.
 
     Far cheaper than counting rows with secobserve_list: these come from the
@@ -640,24 +449,22 @@ async def secobserve_product_metrics(params: MetricsInput) -> str:
         403 means no view permission on the product. An empty timeline usually
         means the metrics job has not run yet for that window -- check kind="status".
     """
-    if params.kind == "status":
+    if kind == "status":
         payload = await request("GET", "/metrics/product_metrics_status/")
-    elif params.kind == "current":
-        payload = await request("GET", "/metrics/product_metrics_current/", params={"product_id": params.product_id})
+    elif kind == "current":
+        payload = await request("GET", "/metrics/product_metrics_current/", params={"product_id": product_id})
     else:
         payload = await request(
             "GET",
             "/metrics/product_metrics_timeline/",
-            params={"product_id": params.product_id, "age": params.age.value if params.age else None},
+            params={"product_id": product_id, "age": age.value if age else None},
         )
 
-    if params.response_format is ResponseFormat.JSON:
+    if response_format is ResponseFormat.JSON:
         return json.dumps(payload, indent=2, ensure_ascii=False, default=str)
-    scope = f"product {params.product_id}" if params.product_id else "all products"
+    scope = f"product {product_id}" if product_id else "all products"
     if isinstance(payload, dict):
-        return render_object(
-            payload, title=f"Metrics ({params.kind}, {scope})", response_format=ResponseFormat.MARKDOWN
-        )
+        return render_object(payload, title=f"Metrics ({kind}, {scope})", response_format=ResponseFormat.MARKDOWN)
     return json.dumps(payload, indent=2, default=str)
 
 
@@ -672,7 +479,53 @@ async def secobserve_product_metrics(params: MetricsInput) -> str:
     ),
 )
 @tool_errors
-async def secobserve_upload_file(params: UploadInput) -> str:
+async def secobserve_upload_file(
+    kind: Annotated[
+        Literal["observations", "sbom", "vex"],
+        Field(
+            description=(
+                "'observations' = a scanner report (Trivy, Grype, Semgrep, ZAP, ...); "
+                "'sbom' = a CycloneDX or SPDX SBOM, which creates license components; "
+                "'vex' = a third-party VEX document whose statements assess existing observations."
+            )
+        ),
+    ],
+    file_path: Annotated[
+        str,
+        Field(description="Path to the file, absolute or relative to the server's import directory.", min_length=1),
+    ],
+    product_id: Annotated[
+        int | None, Field(description="Target product by id. Give this or product_name.", ge=1)
+    ] = None,
+    product_name: Annotated[
+        str | None,
+        Field(
+            description="Target product by exact name. The by-name endpoints can create the branch on the fly.",
+            max_length=255,
+        ),
+    ] = None,
+    branch_id: Annotated[int | None, Field(description="Target branch by id, with product_id.", ge=1)] = None,
+    branch_name: Annotated[
+        str | None,
+        Field(description="Target branch by name; created if missing. Use with product_name.", max_length=255),
+    ] = None,
+    service: Annotated[str | None, Field(description="Service name to attach the findings to.", max_length=255)] = None,
+    suppress_licenses: Annotated[
+        bool | None,
+        Field(description="For kind='observations': skip license component extraction from the report."),
+    ] = None,
+    docker_image_name_tag: Annotated[
+        str | None,
+        Field(description="Origin metadata: the scanned image, e.g. 'registry/app:1.2.3'.", max_length=513),
+    ] = None,
+    endpoint_url: Annotated[
+        str | None, Field(description="Origin metadata: the scanned URL, for DAST reports.", max_length=2048)
+    ] = None,
+    kubernetes_cluster: Annotated[str | None, Field(description="Origin metadata: cluster.", max_length=255)] = None,
+    kubernetes_namespace: Annotated[
+        str | None, Field(description="Origin metadata: namespace.", max_length=255)
+    ] = None,
+) -> str:
     """Import a local scanner report, SBOM or VEX document into SecObserve.
 
     This is the correct way to get findings in: the import deduplicates against
@@ -717,38 +570,49 @@ async def secobserve_upload_file(params: UploadInput) -> str:
         read the format -- check the product's expected parser with
         secobserve_list(resource="parsers"). Read-only mode blocks the call.
     """
-    filename, content = read_upload(params.file_path)
+    if kind != "vex":
+        if bool(product_id) == bool(product_name):
+            raise ValueError("Give exactly one of product_id or product_name.")
+        if product_id and branch_name:
+            raise ValueError("branch_name goes with product_name; with product_id use branch_id.")
+        if product_name and branch_id:
+            raise ValueError("branch_id goes with product_id; with product_name use branch_name.")
+    filename, content = read_upload(file_path)
 
-    if params.kind == "vex":
+    if kind == "vex":
         payload = await request("POST", "/vex/vex_import/", files={"file": (filename, content)})
         return _summarise_import(payload, f"Imported VEX document {filename}.")
 
-    by_name = bool(params.product_name)
-    if params.kind == "sbom":
+    by_name = bool(product_name)
+    if kind == "sbom":
         path = "/import/file_upload_sbom_by_name/" if by_name else "/import/file_upload_sbom_by_id/"
     else:
         path = "/import/file_upload_observations_by_name/" if by_name else "/import/file_upload_observations_by_id/"
 
     form: dict[str, Any] = {}
     if by_name:
-        form["product_name"] = params.product_name
-        if params.branch_name:
-            form["branch_name"] = params.branch_name
+        form["product_name"] = product_name
+        if branch_name:
+            form["branch_name"] = branch_name
     else:
-        form["product"] = params.product_id
-        if params.branch_id:
-            form["branch"] = params.branch_id
-    if params.service:
-        form["service"] = params.service
-    if params.kind == "observations" and params.suppress_licenses is not None:
-        form["suppress_licenses"] = params.suppress_licenses
-    for key in ("docker_image_name_tag", "endpoint_url", "kubernetes_cluster", "kubernetes_namespace"):
-        value = getattr(params, key)
+        form["product"] = product_id
+        if branch_id:
+            form["branch"] = branch_id
+    if service:
+        form["service"] = service
+    if kind == "observations" and suppress_licenses is not None:
+        form["suppress_licenses"] = suppress_licenses
+    for key, value in (
+        ("docker_image_name_tag", docker_image_name_tag),
+        ("endpoint_url", endpoint_url),
+        ("kubernetes_cluster", kubernetes_cluster),
+        ("kubernetes_namespace", kubernetes_namespace),
+    ):
         if value:
             form[key] = value
 
     payload = await request("POST", path, files={"file": (filename, content)}, data=form)
-    return _summarise_import(payload, f"Imported {filename} as {params.kind} via {path}.")
+    return _summarise_import(payload, f"Imported {filename} as {kind} via {path}.")
 
 
 @mcp.tool(
@@ -762,7 +626,23 @@ async def secobserve_upload_file(params: UploadInput) -> str:
     ),
 )
 @tool_errors
-async def secobserve_api_import(params: ApiImportInput) -> str:
+async def secobserve_api_import(
+    api_configuration_id: Annotated[
+        int | None,
+        Field(description="Id of the API configuration to pull from. Give this or api_configuration_name.", ge=1),
+    ] = None,
+    api_configuration_name: Annotated[
+        str | None, Field(description="Name of the API configuration to pull from.", max_length=255)
+    ] = None,
+    branch_id: Annotated[int | None, Field(description="Target branch by id, with the id form.", ge=1)] = None,
+    branch_name: Annotated[
+        str | None,
+        Field(description="Target branch by name, with the name form; created if missing.", max_length=255),
+    ] = None,
+    service: Annotated[str | None, Field(description="Service name to attach the findings to.", max_length=255)] = None,
+    docker_image_name_tag: Annotated[str | None, Field(description="Origin metadata: image.", max_length=513)] = None,
+    endpoint_url: Annotated[str | None, Field(description="Origin metadata: URL.", max_length=2048)] = None,
+) -> str:
     """Pull findings into SecObserve from an upstream API it already has credentials for.
 
     The credentials, base URL and parser come from an API configuration stored on
@@ -794,27 +674,29 @@ async def secobserve_api_import(params: ApiImportInput) -> str:
         secobserve_list(resource="vulnerability_checks") before retrying, or raise
         SECOBSERVE_TIMEOUT.
     """
-    by_name = bool(params.api_configuration_name)
+    if bool(api_configuration_id) == bool(api_configuration_name):
+        raise ValueError("Give exactly one of api_configuration_id or api_configuration_name.")
+    by_name = bool(api_configuration_name)
     path = "/import/api_import_observations_by_name/" if by_name else "/import/api_import_observations_by_id/"
 
     body: dict[str, Any] = {}
     if by_name:
-        body["api_configuration_name"] = params.api_configuration_name
-        if params.branch_name:
-            body["branch_name"] = params.branch_name
+        body["api_configuration_name"] = api_configuration_name
+        if branch_name:
+            body["branch_name"] = branch_name
     else:
-        body["api_configuration"] = params.api_configuration_id
-        if params.branch_id:
-            body["branch"] = params.branch_id
-    if params.service:
-        body["service"] = params.service
-    if params.docker_image_name_tag:
-        body["docker_image_name_tag"] = params.docker_image_name_tag
-    if params.endpoint_url:
-        body["endpoint_url"] = params.endpoint_url
+        body["api_configuration"] = api_configuration_id
+        if branch_id:
+            body["branch"] = branch_id
+    if service:
+        body["service"] = service
+    if docker_image_name_tag:
+        body["docker_image_name_tag"] = docker_image_name_tag
+    if endpoint_url:
+        body["endpoint_url"] = endpoint_url
 
     payload = await request("POST", path, json_body=body)
-    target = params.api_configuration_name or params.api_configuration_id
+    target = api_configuration_name or api_configuration_id
     return _summarise_import(payload, f"Imported from API configuration {target}.")
 
 
@@ -829,7 +711,22 @@ async def secobserve_api_import(params: ApiImportInput) -> str:
     ),
 )
 @tool_errors
-async def secobserve_trigger_scan(params: TriggerScanInput) -> str:
+async def secobserve_trigger_scan(
+    scanner: Annotated[
+        Literal["osv", "vulnerablecode"],
+        Field(
+            description=(
+                "'osv' queries osv.dev for the product's known components; 'vulnerablecode' queries a "
+                "configured VulnerableCode instance. Each must be enabled on the product first."
+            )
+        ),
+    ],
+    product_id: Annotated[int, Field(description="Product to scan.", ge=1)],
+    branch_id: Annotated[
+        int | None,
+        Field(description="Scan one branch only. Omit to scan every branch of the product.", ge=1),
+    ] = None,
+) -> str:
     """Run SecObserve's own OSV or VulnerableCode scan over a product's known components.
 
     These scanners need no report: they look up the components SecObserve already
@@ -859,15 +756,11 @@ async def secobserve_trigger_scan(params: TriggerScanInput) -> str:
         cancel the scan -- check secobserve_list(resource="vulnerability_checks")
         rather than retrying blind.
     """
-    suffix = f"scan_{'osv' if params.scanner == 'osv' else 'vulnerablecode'}"
-    path = (
-        f"/products/{params.product_id}/{params.branch_id}/{suffix}/"
-        if params.branch_id
-        else f"/products/{params.product_id}/{suffix}/"
-    )
+    suffix = f"scan_{'osv' if scanner == 'osv' else 'vulnerablecode'}"
+    path = f"/products/{product_id}/{branch_id}/{suffix}/" if branch_id else f"/products/{product_id}/{suffix}/"
     payload = await request("POST", path)
-    scope = f"branch {params.branch_id}" if params.branch_id else "all branches"
-    return _summarise_import(payload, f"{params.scanner} scan of product {params.product_id} ({scope}) finished.")
+    scope = f"branch {branch_id}" if branch_id else "all branches"
+    return _summarise_import(payload, f"{scanner} scan of product {product_id} ({scope}) finished.")
 
 
 @mcp.tool(
@@ -881,7 +774,17 @@ async def secobserve_trigger_scan(params: TriggerScanInput) -> str:
     ),
 )
 @tool_errors
-async def secobserve_run_periodic_task(params: RunPeriodicTaskInput) -> str:
+async def secobserve_run_periodic_task(
+    task: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Registered task name. Omit to list the names this instance accepts instead of running anything."
+            ),
+            max_length=100,
+        ),
+    ] = None,
+) -> str:
     """Trigger one of SecObserve's scheduled background jobs now, or list which jobs exist.
 
     Useful when a metric looks stale or housekeeping has not run. The task is
@@ -911,14 +814,14 @@ async def secobserve_run_periodic_task(params: RunPeriodicTaskInput) -> str:
         409 means that task is already running; wait for it rather than retrying.
         Requires superuser; a product token gets 403.
     """
-    if not params.task:
+    if not task:
         payload = await request("GET", "/periodic_tasks/registered_tasks/")
         return json.dumps(payload, indent=2, ensure_ascii=False, default=str)
 
-    await request("POST", "/periodic_tasks/run/", json_body={"task": params.task})
+    await request("POST", "/periodic_tasks/run/", json_body={"task": task})
     return (
-        f"Queued background task '{params.task}'. Watch it with "
-        f"secobserve_list(resource='periodic_tasks', filters={{'task': '{params.task}'}}, ordering='-start_time')."
+        f"Queued background task '{task}'. Watch it with "
+        f"secobserve_list(resource='periodic_tasks', filters={{'task': '{task}'}}, ordering='-start_time')."
     )
 
 
@@ -933,7 +836,28 @@ async def secobserve_run_periodic_task(params: RunPeriodicTaskInput) -> str:
     ),
 )
 @tool_errors
-async def secobserve_status(params: StatusInput) -> str:
+async def secobserve_status(
+    kind: Annotated[
+        Literal["version", "health", "settings", "background_tasks", "purl_types"],
+        Field(
+            description=(
+                "'version' = SecObserve version; 'health' = liveness; 'settings' = the feature flags and "
+                "intervals this instance exposes publicly; 'background_tasks' = queue statistics (superuser); "
+                "'purl_types' = the package-URL types known to the instance."
+            )
+        ),
+    ],
+    product_id: Annotated[
+        int | None,
+        Field(description="Required for kind='purl_types': the product whose package-URL types to read.", ge=1),
+    ] = None,
+    purl_type: Annotated[
+        str | None,
+        Field(
+            description="With kind='purl_types': look up one type (e.g. 'maven') instead of listing all.", max_length=50
+        ),
+    ] = None,
+) -> str:
     """Read instance-level facts: version, health, public settings, queue statistics, PURL types.
 
     Worth calling once at the start of a session: the version decides which
@@ -962,17 +886,19 @@ async def secobserve_status(params: StatusInput) -> str:
         "background_tasks" requires superuser and returns 403 for a product token.
         Everything else works for any authenticated caller.
     """
+    if kind == "purl_types" and not product_id:
+        raise ValueError("kind='purl_types' needs product_id; the endpoint reports 404 without it.")
     query: dict[str, Any] | None = None
-    if params.kind == "purl_types":
-        path = f"/purl_types/{params.purl_type}/" if params.purl_type else "/purl_types/"
-        query = {"product": params.product_id}
+    if kind == "purl_types":
+        path = f"/purl_types/{purl_type}/" if purl_type else "/purl_types/"
+        query = {"product": product_id}
     else:
         path = {
             "version": "/status/version/",
             "health": "/status/health/",
             "settings": "/status/settings/",
             "background_tasks": "/status/background_task_statistics/",
-        }[params.kind]
+        }[kind]
 
     payload = await request("GET", path, params=query)
     return json.dumps(payload, indent=2, ensure_ascii=False, default=str)
@@ -989,7 +915,48 @@ async def secobserve_status(params: StatusInput) -> str:
     ),
 )
 @tool_errors
-async def secobserve_vex_document(params: VexDocumentInput) -> str:
+async def secobserve_vex_document(
+    format: Annotated[Literal["csaf", "openvex", "cyclonedx"], Field(description="VEX document format to generate.")],
+    document_id_prefix: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Prefix of the document id. Required when creating, and to identify the document when updating."
+            ),
+            max_length=200,
+        ),
+    ] = None,
+    document_base_id: Annotated[
+        str | None,
+        Field(description="The generated base id. Required only when updating an existing document.", max_length=200),
+    ] = None,
+    product_id: Annotated[
+        int | None,
+        Field(description="Cover one product. Give product_id or vulnerability_names (or both) when creating.", ge=1),
+    ] = None,
+    vulnerability_names: Annotated[
+        list[str] | None,
+        Field(description="Cover these vulnerabilities across products, e.g. ['CVE-2024-3094'].", max_length=20),
+    ] = None,
+    branch_ids: Annotated[
+        list[int] | None, Field(description="Restrict to these branches of the product.", max_length=20)
+    ] = None,
+    fields: Annotated[
+        dict[str, Any] | None,
+        Field(
+            description=(
+                "Format-specific fields. CSAF create needs title, publisher_name, publisher_category, "
+                "publisher_namespace, tracking_status, tlp_label; OpenVEX needs id_namespace and author; "
+                "CycloneDX takes author and manufacturer. Read the exact set with "
+                "secobserve_describe_resource on the matching vex_* resource, or from /api/oa3/swagger-ui."
+            )
+        ),
+    ] = None,
+    filename: Annotated[
+        str | None,
+        Field(description="Base filename for the generated document. No directory separators.", max_length=120),
+    ] = None,
+) -> str:
     """Generate a CSAF, OpenVEX or CycloneDX VEX document from assessed observations, or revise one.
 
     The document's content comes from the assessments already recorded: statuses
@@ -1030,24 +997,32 @@ async def secobserve_vex_document(params: VexDocumentInput) -> str:
         secobserve_describe_resource on the matching vex_* resource. A document with
         no qualifying assessments is generated but empty of statements.
     """
-    body: dict[str, Any] = dict(params.fields or {})
-    if params.product_id:
-        body["product"] = params.product_id
-    if params.vulnerability_names:
-        body["vulnerability_names"] = params.vulnerability_names
-    if params.branch_ids:
-        body["branches"] = params.branch_ids
+    updating = bool(document_base_id)
+    if updating and not document_id_prefix:
+        raise ValueError("Updating a document needs both document_id_prefix and document_base_id.")
+    if not updating:
+        if not document_id_prefix:
+            raise ValueError("Creating a document needs document_id_prefix.")
+        if not product_id and not vulnerability_names:
+            raise ValueError("Creating a document needs product_id, vulnerability_names, or both.")
+    body: dict[str, Any] = dict(fields or {})
+    if product_id:
+        body["product"] = product_id
+    if vulnerability_names:
+        body["vulnerability_names"] = vulnerability_names
+    if branch_ids:
+        body["branches"] = branch_ids
 
-    stem = f"vex/{params.format}_document"
-    if params.document_base_id:
-        path = f"/{stem}/update/{params.document_id_prefix}/{params.document_base_id}/"
+    stem = f"vex/{format}_document"
+    if document_base_id:
+        path = f"/{stem}/update/{document_id_prefix}/{document_base_id}/"
         body.pop("product", None)
         body.pop("vulnerability_names", None)
         body.pop("branches", None)
     else:
-        body["document_id_prefix"] = params.document_id_prefix
+        body["document_id_prefix"] = document_id_prefix
         path = f"/{stem}/create/"
 
     content = await request("POST", path, json_body=body, expect_binary=True)
-    default_name = f"{params.document_id_prefix}-{params.document_base_id or 'new'}-{params.format}"
-    return write_export(params.filename or default_name, "json", content or b"")
+    default_name = f"{document_id_prefix}-{document_base_id or 'new'}-{format}"
+    return write_export(filename or default_name, "json", content or b"")
