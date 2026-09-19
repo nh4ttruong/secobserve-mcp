@@ -4,6 +4,12 @@ Notable changes per release. Format follows [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-09-19
+
+### Fixed
+
+- The container image is built for `linux/arm64` as well as `linux/amd64`. 0.2.0 shipped amd64 only, which ran under emulation on an arm64 host and not at all on an arm64 node.
+
 ## [0.2.0] — 2026-09-19
 
 ### Changed
@@ -51,7 +57,8 @@ Notable changes per release. Format follows [Keep a Changelog](https://keepachan
 
 First release. 18 tools over the SecObserve REST API: generic CRUD and discovery across ~50 resources, an escape hatch for the ~40 named actions, and validated workflows for assessment, four-eyes approval, metrics, import, scans, periodic tasks, status and VEX generation.
 
-[Unreleased]: https://github.com/nh4ttruong/secobserve-mcp/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/nh4ttruong/secobserve-mcp/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/nh4ttruong/secobserve-mcp/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/nh4ttruong/secobserve-mcp/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/nh4ttruong/secobserve-mcp/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/nh4ttruong/secobserve-mcp/compare/v0.1.1...v0.1.2
