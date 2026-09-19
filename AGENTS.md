@@ -191,7 +191,7 @@ Conventional Commits, one logical change per commit:
 
 The subject is imperative, lower case, no trailing period, at most 72 characters: `fix(schema): reject unknown filters before sending the request`.
 
-The body is where the work actually gets explained, and it is not optional for anything non-trivial. Say **why**, not what — the diff already shows what. If a change exists because of a behaviour in SecObserve or in the MCP SDK, name that behaviour; the next person cannot rediscover it from the code.
+The body is **short**: the point, not an essay. Say **why** in a sentence or two — the diff already shows what. Name a SecObserve or MCP SDK behaviour when the change exists because of one, since that is the part nobody can rediscover from the code. No paragraph of reasoning, no walk through the alternatives you rejected, no restating the diff in prose. Two short paragraphs is a long body.
 
 A breaking change is `feat!:` or a `BREAKING CHANGE:` footer. Breaking here means a tool was renamed or removed, an input field changed shape, or an output schema changed — anything an already-configured client would notice.
 
@@ -199,7 +199,7 @@ Never add AI attribution or co-author trailers.
 
 ### Pull requests
 
-The PR describes the change, not the process of making it. Short, logical, technical. No screenshots of passing tests, no narration of what you tried first.
+The PR describes the change, not the process of making it. **Short, logical, technical** — the main points only. No screenshots of passing tests, no narration of what you tried first, no justifying a decision at length. A reviewer opens the diff; the body tells them where to look and what to distrust.
 
 Four parts, in this order:
 
@@ -209,7 +209,7 @@ What this adds or fixes, in one or two sentences.
 
 ## Change
 The technical substance: which modules, which behaviour, which contract.
-Bullets, not prose. Name the invariant if one is involved.
+Bullets, one line each. Never prose. Name the invariant if one is involved.
 
 ## Impact
 What a user or an already-configured client notices. Say "none" when
@@ -217,13 +217,13 @@ nothing observable changes. Call out anything that needs a version bump,
 a re-release, or a config change.
 
 ## Notes
-Anything the reviewer needs and cannot see in the diff: a SecObserve
-behaviour you relied on, a limitation you accepted, a follow-up you
-deliberately left out.
+Only what the reviewer cannot see in the diff: a SecObserve behaviour you
+relied on, a limitation you accepted, a follow-up left out. A few bullets.
 ```
 
 Rules that matter more than the template:
 
+- Length is a rule, not a preference. If a section needs more than a few bullets, the PR is doing too much.
 - One concern per PR. A refactor and a fix in the same PR means neither can be reverted alone.
 - Do not translate technical terms. `observation`, `assessment`, `projection`, `trusted publishing` stay as they are.
 - State what you actually verified, and what you did not. "47 tests pass, no live instance touched" is worth more than a claim that everything works.
