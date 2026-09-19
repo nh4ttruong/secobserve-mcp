@@ -101,7 +101,7 @@ docker run --rm -p 8931:8931 \
   ghcr.io/nh4ttruong/secobserve-mcp
 ```
 
-The image defaults to `--transport http --host 0.0.0.0`, runs as a non-root user, and answers `GET /healthz` with its version.
+The image is built for `linux/amd64` and `linux/arm64`, defaults to `--transport http --host 0.0.0.0`, runs as a non-root user, and answers `GET /healthz` with its version.
 `/healthz` is liveness only and never calls SecObserve, so a backend outage does not get this server restarted.
 
 One token is baked into the environment, so every caller of a container shares one SecObserve identity.
