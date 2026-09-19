@@ -1,22 +1,33 @@
 """Read the deployed instance's OpenAPI schema so tool help cannot drift.
 
 SecObserve serves a drf-spectacular schema at /api/oa3/schema/. It is large, so
-it is fetched once per process and sliced per resource on demand.
+it is fetched once and sliced per resource on demand, then refetched once the
+cached copy passes its TTL.
 """
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from .client import request
 
+#: How long a fetched schema is trusted. A stdio server is short-lived and would
+#: not care, but an HTTP deployment outlives backend upgrades, and a stale schema
+#: rejects filters the running backend now accepts.
+SCHEMA_TTL_SECONDS = 300.0
+
 _schema: dict[str, Any] | None = None
+_schema_fetched_at = 0.0
 
 
 async def get_schema() -> dict[str, Any]:
-    global _schema
-    if _schema is None:
+    global _schema, _schema_fetched_at
+    # monotonic, so a clock adjustment cannot pin the cache as fresh forever.
+    now = time.monotonic()
+    if _schema is None or now - _schema_fetched_at >= SCHEMA_TTL_SECONDS:
         _schema = await request("GET", "/oa3/schema/", params={"format": "json"})
+        _schema_fetched_at = now
     return _schema or {}
 
 

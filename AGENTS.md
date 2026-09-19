@@ -253,6 +253,6 @@ A published version is permanent. PyPI does not allow re-uploading a version, so
 - No automated integration test runs in CI: verification against a real backend is still manual, via `--check` and `evals/seed.py`.
 - Publishing is tokenless: PyPI trusted publishing plus GitHub OIDC for the registry. Both are configured on the provider side, not in this repo, so a fresh fork cannot release without setting them up.
 - Version lives in three places that must agree: `pyproject.toml`, `server.json`, and the git tag; the release workflow fails the build when they diverge. The Python module derives its own version from installed package metadata, so it is not a fourth place to edit.
-- The OpenAPI schema is cached per process with no TTL. If the backend is upgraded while the server runs, restart the server.
+- The OpenAPI schema is cached in-process for `SCHEMA_TTL_SECONDS` (300). A backend upgraded mid-run is picked up within that window, not immediately; restart the server if you need it now. Callers past the TTL may refetch concurrently — the GET is idempotent, and a module-level `asyncio.Lock` would break across the event loops the tests create.
 
 Do not hide these limitations in tool descriptions or documentation when making related changes.

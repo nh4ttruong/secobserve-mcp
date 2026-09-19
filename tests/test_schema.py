@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import httpx
+import pytest
 import respx
 
 from secobserve_mcp import schema
@@ -100,6 +102,26 @@ async def test_schema_is_fetched_once_per_process() -> None:
     await secobserve_describe_resource(DescribeResourceInput(resource="products"))
 
     assert route.call_count == 1
+
+
+@respx.mock
+async def test_schema_is_refetched_once_the_ttl_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    schema._schema = None
+    route = respx.get(f"{API}/oa3/schema/").mock(return_value=httpx.Response(200, json=SCHEMA))
+
+    # A stub on the module, not on time.monotonic itself: httpx uses the real
+    # clock for its own timeouts and must keep seeing it.
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(schema, "time", SimpleNamespace(monotonic=lambda: clock["now"]))
+
+    await secobserve_describe_resource(DescribeResourceInput(resource="observations"))
+    clock["now"] += schema.SCHEMA_TTL_SECONDS - 1
+    await secobserve_describe_resource(DescribeResourceInput(resource="products"))
+    assert route.call_count == 1
+
+    clock["now"] += 2
+    await secobserve_describe_resource(DescribeResourceInput(resource="products"))
+    assert route.call_count == 2
 
 
 @respx.mock
