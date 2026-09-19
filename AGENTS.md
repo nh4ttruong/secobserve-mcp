@@ -37,6 +37,7 @@ Do not expand into these without the user asking.
 - Validation: Pydantic v2, one input model per tool.
 - Tests: `pytest` + `pytest-asyncio` (`asyncio_mode = "auto"`) with `respx` mocking HTTP.
 - Lint/types: `ruff` (line-length 120) and `mypy --strict`.
+- CI: `.github/workflows/ci.yml` on every push to `main` and every pull request — ruff and mypy once, `pytest` on 3.11, 3.12, 3.13 and 3.14. `release.yml` re-runs the same checks on the tag, because the tagged commit is what ships.
 - Current version: `0.1.2`.
 - Baseline when this file was updated: 47 tests passing, ruff and mypy strict clean, stdio handshake and streamable HTTP both verified against a live instance.
 
@@ -243,7 +244,6 @@ A published version is permanent. PyPI does not allow re-uploading a version, so
 - `registry.py` is a hand-written list and can fall behind when the backend adds resources. Filters and fields cannot drift, since they are read from the live schema, but **a new resource will not appear** until it is added by hand.
 - `secobserve_trigger_scan` and `secobserve_api_import` block until the backend finishes. A timeout does not cancel the work in flight; check `vulnerability_checks` rather than retrying blind.
 - No automated integration test runs in CI: verification against a real backend is still manual, via `--check` and `evals/seed.py`.
-- CI runs only on a `v*` tag, in `.github/workflows/release.yml`. There is no per-push test workflow yet, so a broken commit is only caught at release time.
 - Publishing is tokenless: PyPI trusted publishing plus GitHub OIDC for the registry. Both are configured on the provider side, not in this repo, so a fresh fork cannot release without setting them up.
 - Version lives in three places that must agree: `pyproject.toml`, `server.json`, and the git tag; the release workflow fails the build when they diverge. The Python module derives its own version from installed package metadata, so it is not a fourth place to edit.
 - The OpenAPI schema is cached per process with no TTL. If the backend is upgraded while the server runs, restart the server.

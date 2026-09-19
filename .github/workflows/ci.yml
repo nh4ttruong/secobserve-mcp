@@ -1,0 +1,59 @@
+name: CI
+
+# Until this existed, the checks ran only on a v* tag, so a broken commit was
+# discovered at release time -- when the version is already burned and PyPI will
+# not accept a re-upload of it.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A force-push should not leave the superseded run burning minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          enable-cache: true
+          python-version: "3.11"
+
+      - run: uv sync --extra dev
+
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      # mypy pins python_version in pyproject.toml, so its verdict is the same on
+      # every interpreter -- running it once is the whole matrix's worth.
+      - run: uv run mypy src
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      # One failing interpreter should not hide the others.
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python }}
+
+      - run: uv sync --extra dev
+
+      - run: uv run pytest -q
+
+      # The console script is the only entry point users touch; an import error
+      # in a tool module does not fail pytest but does break every client.
+      - run: uv run secobserve-mcp --help
