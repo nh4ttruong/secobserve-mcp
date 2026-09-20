@@ -15,7 +15,7 @@ from typing import Any
 
 import httpx
 
-from .config import ConfigError, get_config, request_auth_header
+from .config import CREDENTIAL_HEADER, ConfigError, get_config, request_auth_header
 
 _client: httpx.AsyncClient | None = None
 
@@ -149,8 +149,9 @@ async def request(
     config = get_config()
     if method.upper() != "GET" and config.read_only:
         raise ReadOnlyError(
-            f"Refusing {method} {path}: the server runs in read-only mode "
-            "(SECOBSERVE_READ_ONLY). Unset it to allow writes."
+            f"Refusing {method} {path}: the server is in read-only mode, either because "
+            "SECOBSERVE_READ_ONLY is set or because it was started with --shared-identity, which forces it. "
+            f"To write, send the caller's own credential in {CREDENTIAL_HEADER}, or run over stdio."
         )
 
     clean_params = {k: v for k, v in (params or {}).items() if v is not None}
