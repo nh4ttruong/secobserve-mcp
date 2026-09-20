@@ -11,6 +11,7 @@ import argparse
 import asyncio
 import json
 import sys
+from pathlib import Path
 
 from . import __version__
 from .config import (
@@ -49,6 +50,14 @@ TOKEN_PLACEHOLDER = "<your-api-token>"
 
 CLIENTS = ("claude", "codex", "json", "vscode")
 
+# Once `uv tool install` has created a persistent environment, a bare `uvx secobserve-mcp` runs that pinned copy
+# forever. `@latest` revalidates against the index on every launch; `--isolated` only skips the tool environment and
+# may still serve a cached build.
+PACKAGE_SPEC = "secobserve-mcp@latest"
+
+PYPI_JSON_URL = "https://pypi.org/pypi/secobserve-mcp/json"
+PYPI_TIMEOUT_SECONDS = 3.0
+
 
 def _print_config(client: str) -> int:
     """Print a registration snippet for one MCP client.
@@ -60,17 +69,17 @@ def _print_config(client: str) -> int:
 
     if client == "claude":
         flags = " ".join(f"--env {k}={v}" for k, v in env.items())
-        print(f"claude mcp add secobserve {flags} -- uvx secobserve-mcp")
+        print(f"claude mcp add secobserve {flags} -- uvx {PACKAGE_SPEC}")
     elif client == "codex":
         pairs = ", ".join(f'{k} = "{v}"' for k, v in env.items())
         print("[mcp_servers.secobserve]")
         print('command = "uvx"')
-        print('args = ["secobserve-mcp"]')
+        print(f'args = ["{PACKAGE_SPEC}"]')
         print(f"env = {{ {pairs} }}")
     else:
         # VS Code keys this "servers"; everyone else kept "mcpServers".
         key = "servers" if client == "vscode" else "mcpServers"
-        block = {key: {"secobserve": {"command": "uvx", "args": ["secobserve-mcp"], "env": env}}}
+        block = {key: {"secobserve": {"command": "uvx", "args": [PACKAGE_SPEC], "env": env}}}
         print(json.dumps(block, indent=2))
 
     print(f"\nReplace {TOKEN_PLACEHOLDER}; create one with", file=sys.stderr)
@@ -78,6 +87,43 @@ def _print_config(client: str) -> int:
     print('       -H "Content-Type: application/json" \\', file=sys.stderr)
     print('       -d \'{"username": "you", "password": "...", "name": "mcp"}\'', file=sys.stderr)
     return 0
+
+
+def _runs_from_uv_tool_env() -> bool:
+    """Whether this interpreter is a persistent `uv tool install` environment rather than an ephemeral uvx one.
+
+    uv writes uv-receipt.toml at the root of a tool environment and nowhere else; an ephemeral uvx run lives under
+    the uv cache with no receipt.
+    """
+    return (Path(sys.prefix) / "uv-receipt.toml").is_file()
+
+
+async def _latest_release() -> str | None:
+    """The newest version on PyPI, or None when it cannot be determined. Never raises, never called on server start."""
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=PYPI_TIMEOUT_SECONDS) as http:
+            response = await http.get(PYPI_JSON_URL)
+            response.raise_for_status()
+            latest = response.json()["info"]["version"]
+        return latest if isinstance(latest, str) else None
+    except Exception:  # noqa: BLE001 - advisory only; --check must still report on SecObserve
+        return None
+
+
+async def _report_install() -> None:
+    latest = await _latest_release()
+    if latest is None:
+        print(f"  secobserve-mcp: {__version__} (latest release could not be determined)", file=sys.stderr)
+    elif latest == __version__:
+        print(f"  secobserve-mcp: {__version__} (latest)")
+    else:
+        print(f"  secobserve-mcp: {__version__} (PyPI has {latest})")
+
+    if _runs_from_uv_tool_env():
+        print("  install: a uv tool environment, which `uvx secobserve-mcp` keeps running instead of the latest")
+        print(f"  fix: uv tool upgrade secobserve-mcp, or point the client at `uvx {PACKAGE_SPEC}`")
 
 
 async def _check() -> int:
@@ -91,12 +137,15 @@ async def _check() -> int:
         print(f"  version: {version.get('version', version)}")
         print(f"  authenticated as: {user.get('username', '?')} (superuser: {user.get('is_superuser', False)})")
         print(f"  read-only: {config.read_only}, deletes enabled: {config.allow_delete}")
-        return 0
+        status = 0
     except Exception as exc:  # noqa: BLE001 - the message is the whole point here
         print(f"Check failed: {exc}", file=sys.stderr)
-        return 1
+        status = 1
     finally:
         await close_client()
+
+    await _report_install()
+    return status
 
 
 def main() -> int:
@@ -109,7 +158,11 @@ def main() -> int:
     parser.add_argument("--transport", choices=["stdio", "http"], default="stdio", help="default: stdio")
     parser.add_argument("--host", default="127.0.0.1", help="bind address for --transport http")
     parser.add_argument("--port", type=int, default=8931, help="port for --transport http")
-    parser.add_argument("--check", action="store_true", help="verify connectivity and credentials, then exit")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="verify connectivity, credentials and that this install is current, then exit",
+    )
     parser.add_argument(
         "--print-config",
         choices=CLIENTS,
