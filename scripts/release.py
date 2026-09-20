@@ -65,13 +65,6 @@ def bump_server_json(text: str, old: str, new: str) -> str:
     return text.replace(field, f'"version": "{new}"')
 
 
-def bump_agents(text: str, new: str) -> str:
-    text, count = re.subn(r"^- Current version: `.+?`\.$", f"- Current version: `{new}`.", text, flags=re.MULTILINE)
-    if count != 1:
-        raise Abort("could not rewrite 'Current version' in AGENTS.md")
-    return text
-
-
 def check_repo_state(new: str) -> None:
     branch = git("rev-parse", "--abbrev-ref", "HEAD")
     if branch != "main":
@@ -110,12 +103,11 @@ def main() -> int:
         edits = {
             "pyproject.toml": bump_pyproject((ROOT / "pyproject.toml").read_text(), new),
             "server.json": bump_server_json((ROOT / "server.json").read_text(), old, new),
-            "AGENTS.md": bump_agents((ROOT / "AGENTS.md").read_text(), new),
         }
 
         print(f"{old} -> {new}")
         if args.dry_run:
-            print("dry run; nothing written. Files that would change: " + ", ".join(edits))
+            print("dry run; nothing written. Files that would change: " + ", ".join((*edits, "uv.lock")))
             return 0
 
         # Checks run before anything is written, so a failure leaves the tree clean instead of half-bumped.
@@ -124,7 +116,14 @@ def main() -> int:
 
         for name, content in edits.items():
             (ROOT / name).write_text(content)
-        git("add", *edits)
+
+        # uv lock reads the new version out of pyproject.toml, so it only runs once the bump is written.
+        print("  uv lock", flush=True)
+        if subprocess.run(("uv", "lock"), cwd=ROOT, check=False).returncode:
+            undo = "git checkout -- " + " ".join((*edits, "uv.lock"))
+            raise Abort(f"uv lock failed; the bump is written but not committed. Undo it with: {undo}")
+
+        git("add", *edits, "uv.lock")
         git("commit", "-m", f"chore(release): v{new}")
         git("tag", f"v{new}")
     except Abort as error:

@@ -25,6 +25,9 @@ jobs:
 
       - run: uv sync --extra dev
 
+      # `uv sync` silently re-locks, so only an explicit check catches a stale uv.lock.
+      - run: uv lock --check
+
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       # python_version is pinned, so one run covers the matrix.

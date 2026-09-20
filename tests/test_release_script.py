@@ -13,15 +13,13 @@ release = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(release)
 
 
-def test_the_version_is_rewritten_in_all_three_places() -> None:
+def test_the_version_is_rewritten_in_both_places() -> None:
     assert release.bump_pyproject('[project]\nversion = "0.2.2"\nrequires-python = ">=3.11"\n', "0.3.0") == (
         '[project]\nversion = "0.3.0"\nrequires-python = ">=3.11"\n'
     )
 
     server = '{\n  "version": "0.2.2",\n  "packages": [{"version": "0.2.2"}]\n}'
     assert release.bump_server_json(server, "0.2.2", "0.3.0").count('"version": "0.3.0"') == 2
-
-    assert release.bump_agents("- Current version: `0.2.2`.\n", "0.3.0") == "- Current version: `0.3.0`.\n"
 
 
 def test_server_json_must_carry_the_version_exactly_twice() -> None:
