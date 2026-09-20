@@ -27,7 +27,7 @@ TIME_BUCKETS = """SecObserve has no date range filter. Every time filter is a re
 
 COUNTING = """`secobserve_list` reports `total` in its envelope: the exact size of the filtered set, whatever page you asked for. A count therefore costs one row -- `page_size=1, fields=["id"]` -- and never needs paging, so let a filter do the counting whenever one exists.
 
-Read rows only when you need the rows themselves; it returns at most 100 per page and reports `has_more` and `next_page`. A number counted off rows you stopped reading is a floor and has to be called one -- anything quoted as complete comes from `total`."""
+Read rows only when you need the rows themselves; it returns at most 100 per page and reports `has_more`, `next_page` and `next_page_size`. A wide projection can be trimmed to fit a result budget, and the envelope then says so: continue with **both** `next_page` and `next_page_size`, because `next_page` with your own page size skips the rows that were cut. A number counted off rows you stopped reading is a floor and has to be called one -- anything quoted as complete comes from `total`."""
 
 METRICS = """Metrics are precalculated, and two things about them are load-bearing.
 

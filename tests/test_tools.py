@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -13,7 +14,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from secobserve_mcp import config
 from secobserve_mcp.app import mcp
-from secobserve_mcp.formatting import ResponseFormat
+from secobserve_mcp.formatting import ResponseFormat, _aligned_window
 from secobserve_mcp.tools_crud import (
     secobserve_call_action,
     secobserve_delete,
@@ -114,6 +115,182 @@ async def test_markdown_truncates_long_values_and_says_so() -> None:
 
     assert "secobserve_get for the full text" in result
     assert len(result) < 1500
+
+
+#: The shape that overflowed a client: observation_logs, 11 fields, ~500 characters per row.
+LOG_FIELDS = [
+    "id",
+    "observation",
+    "user_full_name",
+    "severity",
+    "status",
+    "priority",
+    "assessment_status",
+    "comment",
+    "created",
+    "observation_data.origin_component_name_version",
+    "product_data.name",
+]
+
+
+def log_row(index: int) -> dict[str, object]:
+    return {
+        "id": 9000 + index,
+        "observation": 8000 + index,
+        "user_full_name": "Nguyen Thanh Truong",
+        "severity": "Critical",
+        "status": "Risk accepted",
+        "priority": None,
+        "assessment_status": "Approved",
+        "comment": "Accepted for release 2026.09, tracked in PORTAL-1421",
+        "created": "2026-09-20T14:41:35.851824+02:00",
+        "observation_data": {"origin_component_name_version": "org.apache.logging.log4j:log4j-core:2.17.1"},
+        "product_data": {"name": "Portal"},
+        "description": "x" * 400,
+    }
+
+
+LOG_DATASET = [log_row(index) for index in range(250)]
+
+
+def serve_logs(request: httpx.Request) -> httpx.Response:
+    """A DRF page of LOG_DATASET, so page and page_size mean what the backend makes them mean."""
+    page = int(request.url.params.get("page", 1))
+    page_size = int(request.url.params.get("page_size", 25))
+    start = (page - 1) * page_size
+    rows = LOG_DATASET[start : start + page_size]
+    has_next = start + page_size < len(LOG_DATASET)
+    return httpx.Response(
+        200,
+        json={
+            "count": len(LOG_DATASET),
+            "next": f"{API}/observation_logs/?page={page + 1}" if has_next else None,
+            "results": rows,
+        },
+    )
+
+
+async def list_logs(**arguments: object) -> dict[str, Any]:
+    return json.loads(
+        await secobserve_list(
+            resource="observation_logs", fields=LOG_FIELDS, response_format=ResponseFormat.JSON, **arguments
+        )
+    )
+
+
+@respx.mock
+async def test_a_page_inside_the_budget_is_returned_whole() -> None:
+    respx.get(f"{API}/observation_logs/").mock(side_effect=serve_logs)
+
+    payload = await list_logs(page=1, page_size=25)
+
+    assert "trimmed" not in payload
+    assert payload["count"] == 25
+    assert payload["next_page"] == 2
+    assert payload["next_page_size"] == 25
+
+
+@respx.mock
+async def test_a_page_over_the_budget_is_cut_and_the_envelope_says_so() -> None:
+    respx.get(f"{API}/observation_logs/").mock(side_effect=serve_logs)
+
+    payload = await list_logs(page=1, page_size=100)
+
+    assert payload["trimmed"]["fetched"] == 100
+    assert payload["trimmed"]["returned"] == len(payload["items"]) < 100
+    assert payload["count"] == len(payload["items"])
+    assert payload["has_more"] is True
+    assert "page_size" in payload["trimmed"]["note"]
+
+
+@respx.mock
+async def test_the_cut_result_fits_where_the_untrimmed_one_did_not() -> None:
+    respx.get(f"{API}/observation_logs/").mock(side_effect=serve_logs)
+
+    result = await secobserve_list(
+        resource="observation_logs", page=1, page_size=100, fields=LOG_FIELDS, response_format=ResponseFormat.JSON
+    )
+
+    assert len(result) < 27_000, "the incident returned 52,082 characters for this exact call"
+
+
+@respx.mock
+async def test_markdown_is_cut_by_the_same_budget() -> None:
+    respx.get(f"{API}/observation_logs/").mock(side_effect=serve_logs)
+
+    result = await secobserve_list(resource="observation_logs", page=1, page_size=100, fields=LOG_FIELDS)
+
+    assert "Trimmed to" in result
+    assert result.count("\n## ") < 100
+    assert len(result) < 27_000
+
+
+@respx.mock
+async def test_paging_by_what_the_result_says_reaches_every_record() -> None:
+    respx.get(f"{API}/observation_logs/").mock(side_effect=serve_logs)
+
+    seen: list[int] = []
+    page, page_size = 1, 100
+    for _ in range(50):
+        payload = await list_logs(page=page, page_size=page_size)
+        seen.extend(int(item["id"]) for item in payload["items"])
+        if not payload["has_more"]:
+            break
+        page, page_size = payload["next_page"], payload["next_page_size"]
+    else:  # pragma: no cover - only reached if paging stops converging
+        pytest.fail("paging did not terminate")
+
+    assert seen == [row["id"] for row in LOG_DATASET], "every record exactly once, in order"
+
+
+@respx.mock
+async def test_a_cut_on_a_later_page_points_at_the_first_record_it_dropped() -> None:
+    respx.get(f"{API}/observation_logs/").mock(side_effect=serve_logs)
+
+    payload = await list_logs(page=2, page_size=100)
+    kept = payload["trimmed"]["returned"]
+
+    assert (payload["next_page"] - 1) * payload["next_page_size"] == 100 + kept
+
+    follow_up = await list_logs(page=payload["next_page"], page_size=payload["next_page_size"])
+
+    assert follow_up["items"][0]["id"] == LOG_DATASET[100 + kept]["id"]
+
+
+def test_every_aligned_window_starts_exactly_where_the_cut_did() -> None:
+    for start in range(401):
+        for fits in (1, 2, 3, 7, 13, 37, 50, 51, 97, 100):
+            rows, page, page_size = _aligned_window(start, fits)
+
+            assert 1 <= rows <= fits
+            assert (page - 1) * page_size == start + rows, "the next page must begin at the first row cut"
+
+
+@respx.mock
+async def test_the_trim_is_visible_over_the_protocol() -> None:
+    respx.get(f"{API}/observation_logs/").mock(side_effect=serve_logs)
+
+    result = await call("secobserve_list", resource="observation_logs", page_size=100, fields=LOG_FIELDS)
+
+    assert "Trimmed to" in result
+    assert "would skip them" in result
+
+
+@respx.mock
+async def test_an_unpaginated_action_list_is_cut_and_says_it_cannot_be_paged() -> None:
+    respx.get(f"{API}/observation_logs/count_approvals/").mock(
+        return_value=httpx.Response(200, json=[log_row(index) for index in range(200)])
+    )
+
+    payload = json.loads(
+        await secobserve_call_action(
+            resource="observation_logs", action="count_approvals", response_format=ResponseFormat.JSON
+        )
+    )
+
+    assert payload["trimmed"]["returned"] < 200
+    assert payload["next_page"] is None
+    assert "not paginated" in payload["trimmed"]["note"]
 
 
 async def test_unknown_resource_names_close_matches() -> None:
