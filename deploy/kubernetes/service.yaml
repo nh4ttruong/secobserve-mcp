@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: secobserve-mcp
+  labels:
+    app.kubernetes.io/name: secobserve-mcp
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: secobserve-mcp
+  ports:
+    - name: http
+      port: 8931
+      targetPort: http

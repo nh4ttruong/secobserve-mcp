@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/name: secobserve-mcp
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: secobserve-mcp
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: secobserve-mcp
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: secobserve-mcp
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: {{ toJson .Values.args }}
+          ports:
+            - name: http
+              containerPort: 8931
+          env:
+            - name: SECOBSERVE_BASE_URL
+              value: {{ required "secobserve.baseUrl is required" .Values.secobserve.baseUrl | quote }}
+            - name: SECOBSERVE_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secobserve.tokenSecret.name is required: the Secret is created by the operator" .Values.secobserve.tokenSecret.name }}
+                  key: {{ .Values.secobserve.tokenSecret.key }}
+            - name: SECOBSERVE_READ_ONLY
+              value: {{ .Values.secobserve.readOnly | quote }}
+            - name: SECOBSERVE_ALLOW_DELETE
+              value: {{ .Values.secobserve.allowDelete | quote }}
+            - name: SECOBSERVE_EXPORT_DIR
+              value: /tmp/secobserve-exports
+            # Uploads are confined to this directory; the default is the working directory, which is / in this image.
+            - name: SECOBSERVE_IMPORT_DIR
+              value: /tmp/secobserve-imports
+          # /healthz never calls SecObserve, so readiness only says the listener is up and a SecObserve outage never pulls this pod out of the Service.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          # runAsNonRoot is left unset deliberately: the image's USER is a name, which the kubelet cannot verify, and a UID here would only guess at what useradd picked.
+          securityContext:
+            # 999 is what `useradd --system` picked in the image; confirmed with `id` inside it.
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: scratch
+              mountPath: /tmp
+      volumes:
+        - name: scratch
+          emptyDir: {}
