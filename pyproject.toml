@@ -38,7 +38,7 @@ Homepage = "https://github.com/nh4ttruong/secobserve-mcp"
 Repository = "https://github.com/nh4ttruong/secobserve-mcp"
 Documentation = "https://github.com/nh4ttruong/secobserve-mcp#readme"
 Issues = "https://github.com/nh4ttruong/secobserve-mcp/issues"
-Changelog = "https://github.com/nh4ttruong/secobserve-mcp/blob/main/CHANGELOG.md"
+Changelog = "https://github.com/nh4ttruong/secobserve-mcp/releases"
 "MCP Registry" = "https://registry.modelcontextprotocol.io/?search=secobserve"
 
 [project.scripts]

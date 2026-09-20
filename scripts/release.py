@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare a release: bump the version everywhere, stamp the changelog, run the checks, commit and tag.
+"""Prepare a release: bump the version everywhere, run the checks, commit and tag.
 
 It stops before pushing. A tag only becomes a release once it is pushed, and a published PyPI version can
 never be replaced, so the irreversible step stays in your hands.
@@ -13,7 +13,6 @@ import argparse
 import re
 import subprocess
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -73,24 +72,6 @@ def bump_agents(text: str, new: str) -> str:
     return text
 
 
-def stamp_changelog(text: str, old: str, new: str, today: str) -> str:
-    if "## [Unreleased]" not in text:
-        raise Abort("CHANGELOG.md has no [Unreleased] section")
-    body = text.split("## [Unreleased]", 1)[1].split("\n## [", 1)[0]
-    if not body.strip():
-        raise Abort("the [Unreleased] section is empty; there is nothing to release")
-
-    text = text.replace("## [Unreleased]", f"## [Unreleased]\n\n## [{new}] — {today}", 1)
-    unreleased_link = f"[Unreleased]: {REPO_URL}/compare/v{old}...HEAD"
-    if unreleased_link not in text:
-        raise Abort("could not find the [Unreleased] compare link at the bottom of CHANGELOG.md")
-    return text.replace(
-        unreleased_link,
-        f"[Unreleased]: {REPO_URL}/compare/v{new}...HEAD\n[{new}]: {REPO_URL}/compare/v{old}...v{new}",
-        1,
-    )
-
-
 def check_repo_state(new: str) -> None:
     branch = git("rev-parse", "--abbrev-ref", "HEAD")
     if branch != "main":
@@ -130,9 +111,6 @@ def main() -> int:
             "pyproject.toml": bump_pyproject((ROOT / "pyproject.toml").read_text(), new),
             "server.json": bump_server_json((ROOT / "server.json").read_text(), old, new),
             "AGENTS.md": bump_agents((ROOT / "AGENTS.md").read_text(), new),
-            "CHANGELOG.md": stamp_changelog(
-                (ROOT / "CHANGELOG.md").read_text(), old, new, datetime.now(UTC).astimezone().date().isoformat()
-            ),
         }
 
         print(f"{old} -> {new}")
