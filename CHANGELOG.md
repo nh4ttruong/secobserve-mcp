@@ -40,7 +40,11 @@ Notable changes per release. Format follows [Keep a Changelog](https://keepachan
 
 ### Upgrading
 
-`uvx` re-resolves to the newest version every time it launches the server, so an existing install picks this release up on the next client restart. Pin with `uvx secobserve-mcp@0.1.3` to stay on the previous argument shape.
+This release is breaking, so check which version you are actually running: `uvx secobserve-mcp --version`.
+
+If you ever ran `uv tool install secobserve-mcp`, that pinned a version and `uvx secobserve-mcp` runs the pinned copy — `--refresh` does not change it. Upgrade with `uv tool upgrade secobserve-mcp`. Without such an install, `uvx` resolves at every launch and picks this release up on the next client restart.
+
+`uvx secobserve-mcp@latest` always runs the newest release regardless of a pin, and `uvx secobserve-mcp@0.1.3` stays on the previous argument shape.
 
 ## [0.1.3] — 2026-09-18
 
