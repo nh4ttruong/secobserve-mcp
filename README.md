@@ -64,12 +64,15 @@ Each one carries the caveats that decide whether the report is right: metrics co
 uvx secobserve-mcp --help
 ```
 
-`uvx` downloads and runs it without installing anything permanently, which is what
-the client configurations below use. To put it on your `PATH` instead:
+`uvx` downloads and runs it without installing anything permanently. To put it on your `PATH` instead:
 
 ```bash
 uv tool install secobserve-mcp
 ```
+
+Once you have done that, `uv tool` owns the name: a bare `uvx secobserve-mcp` runs that pinned copy forever and never notices a newer release, so keep it current with `uv tool upgrade secobserve-mcp`.
+The client configurations below therefore say `uvx secobserve-mcp@latest`, which revalidates against PyPI on each launch — once per client session, not once per command.
+`--check` deliberately stays on the bare name, because its job is to report on the copy your clients are actually running.
 
 From a checkout, for development:
 
@@ -105,7 +108,8 @@ Check the wiring before handing it to a client:
 uvx secobserve-mcp --check
 ```
 
-It prints the instance version, the authenticated user, and whether read-only and delete are enabled.
+It prints the instance version, the authenticated user, whether read-only and delete are enabled, and how this install compares to the newest release on PyPI.
+That last part is the only place this server calls pypi.org, it needs one short-lived request, and it degrades to a single line when the index is unreachable.
 
 ## Run as a container
 
@@ -140,7 +144,7 @@ mcp.json` writes a clean file.
 ### Claude Code
 
 ```bash
-claude mcp add secobserve --env SECOBSERVE_BASE_URL=http://localhost:8000 --env SECOBSERVE_API_TOKEN=... -- uvx secobserve-mcp
+claude mcp add secobserve --env SECOBSERVE_BASE_URL=http://localhost:8000 --env SECOBSERVE_API_TOKEN=... -- uvx secobserve-mcp@latest
 ```
 
 ### Codex CLI
@@ -150,7 +154,7 @@ In `~/.codex/config.toml`:
 ```toml
 [mcp_servers.secobserve]
 command = "uvx"
-args = ["secobserve-mcp"]
+args = ["secobserve-mcp@latest"]
 env = { SECOBSERVE_BASE_URL = "http://localhost:8000", SECOBSERVE_API_TOKEN = "..." }
 ```
 
@@ -163,7 +167,7 @@ Most clients take the same JSON shape:
   "mcpServers": {
     "secobserve": {
       "command": "uvx",
-      "args": ["secobserve-mcp"],
+      "args": ["secobserve-mcp@latest"],
       "env": {
         "SECOBSERVE_BASE_URL": "http://localhost:8000",
         "SECOBSERVE_API_TOKEN": "..."
