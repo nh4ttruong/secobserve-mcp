@@ -167,3 +167,22 @@ async def test_stdio_keeps_using_the_environment_credential() -> None:
 
     assert seen == ["APIToken test-token"]
     assert request_auth_header() == "APIToken test-token"
+
+
+async def test_a_refused_write_does_not_blame_an_environment_variable_alone() -> None:
+    """--shared-identity forces read-only without the operator ever setting SECOBSERVE_READ_ONLY."""
+    from secobserve_mcp.client import ReadOnlyError, request
+    from secobserve_mcp.config import CREDENTIAL_HEADER, get_config
+
+    get_config.cache_clear()
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("SECOBSERVE_READ_ONLY", "true")
+        get_config.cache_clear()
+        with pytest.raises(ReadOnlyError) as refused:
+            await request("POST", "/products/")
+
+    get_config.cache_clear()
+    message = str(refused.value)
+    assert "--shared-identity" in message
+    assert CREDENTIAL_HEADER in message
+    assert "Unset it" not in message
