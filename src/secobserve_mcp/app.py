@@ -14,6 +14,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from . import __version__
+from .audit import audit_tool_calls
 from .config import CREDENTIAL_HEADER, request_credential
 
 INSTRUCTIONS = """Tools for SecObserve, a vulnerability and license management platform.
@@ -67,6 +68,9 @@ async def bind_request_credential(ctx: ServerRequestContext[Any, Any], call_next
 
 # Each inbound message is dispatched in its own task, so this binding is that task's alone.
 mcp.middleware.append(bind_request_credential)
+# Middleware runs outermost-first, so the audit line is written inside the binding above and identifies the caller
+# by the credential that call was actually served with.
+mcp.middleware.append(audit_tool_calls)
 
 
 @mcp.custom_route("/healthz", methods=["GET"])  # type: ignore[untyped-decorator]  # SDK decorator is untyped
