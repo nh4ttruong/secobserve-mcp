@@ -20,7 +20,10 @@ ENV_EXPORT_DIR = "SECOBSERVE_EXPORT_DIR"
 ENV_IMPORT_DIR = "SECOBSERVE_IMPORT_DIR"
 
 CREDENTIAL_HEADER = "X-SecObserve-Token"
-CREDENTIAL_SCHEMES = ("APIToken", "JWT")
+# Bearer is SecObserve's OIDC path: it validates the token against the IdP's JWKS and resolves the real user,
+# so a gateway can forward the caller's own access token untouched. It is accepted per request only -- an
+# environment-configured Bearer would be a short-lived token frozen at startup.
+CREDENTIAL_SCHEMES = ("APIToken", "JWT", "Bearer")
 
 DEFAULT_BASE_URL = "http://localhost:8000"
 DEFAULT_TIMEOUT = 60.0

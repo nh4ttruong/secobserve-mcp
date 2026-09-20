@@ -100,7 +100,7 @@ async def test_a_request_without_the_header_falls_back_to_the_environment() -> N
     assert route.calls.last.request.headers["Authorization"] == "APIToken test-token"
 
 
-@pytest.mark.parametrize("credential", ["caller-secret", "Bearer caller-secret", "APIToken   ", "APIToken"])
+@pytest.mark.parametrize("credential", ["caller-secret", "Basic dXNlcjpwYXNz", "APIToken   ", "APIToken"])
 @respx.mock
 async def test_a_malformed_credential_is_refused_rather_than_ignored(credential: str) -> None:
     """Ignoring it would run the call as the service account, which is the failure this change exists to stop."""
