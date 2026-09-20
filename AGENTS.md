@@ -41,7 +41,7 @@ Do not expand into these without the user asking.
 - Container: `Dockerfile` (two stages, `python:3.13-slim`, non-root), published to `ghcr.io/nh4ttruong/secobserve-mcp` by the release workflow. Defaults to HTTP on 0.0.0.0:8931 and serves `GET /healthz` — liveness only, it never calls SecObserve.
 - CI: `.github/workflows/ci.yml` on every push to `main` and every pull request — ruff and mypy once, `pytest` on 3.11, 3.12, 3.13 and 3.14. `release.yml` re-runs the same checks on the tag, because the tagged commit is what ships.
 - Current version: `0.2.2`.
-- Baseline when this file was updated: 70 tests passing, ruff and mypy strict clean, stdio handshake and streamable HTTP both verified against a live instance.
+- Baseline when this file was updated: 85 tests passing, ruff and mypy strict clean, stdio handshake and streamable HTTP both verified against a live instance.
 
 ## Code structure
 
@@ -57,7 +57,7 @@ src/secobserve_mcp/
 ├── types.py            # enums mirrored from the backend (Severity, Status, VEX, ...)
 ├── tools_crud.py       # 8 generic and discovery tools
 ├── tools_workflows.py  # 10 validated workflow tools
-├── prompts.py          # 5 MCP Prompts: triage and the reports
+├── prompts.py          # 6 MCP Prompts: triage, the change feeds and the reports
 └── __main__.py         # argparse, --check, transport selection
 
 evals/seed.py           # seeds the dataset evaluation.xml asks about, via the server's own tools

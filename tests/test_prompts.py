@@ -8,14 +8,14 @@ from mcp.types import GetPromptResult, InputRequiredResult
 from secobserve_mcp import prompts  # noqa: F401  (import registers the prompts)
 from secobserve_mcp.app import mcp
 
-EXPECTED = {"triage-product", "daily-change", "weekly-changes", "daily-report", "monthly-report"}
-METRICS_PROMPTS = ("daily-report", "monthly-report")
+EXPECTED = {"triage-product", "daily-changes", "weekly-changes", "daily-report", "weekly-report", "monthly-report"}
+METRICS_PROMPTS = ("daily-report", "weekly-report", "monthly-report")
 
 
-async def test_all_five_prompts_are_registered() -> None:
+async def test_every_prompt_is_registered() -> None:
     registered = await mcp.list_prompts()
     assert {prompt.name for prompt in registered} == EXPECTED
-    assert len(registered) == 5
+    assert len(registered) == len(EXPECTED)
 
 
 async def test_prompt_arguments_declare_what_is_required() -> None:
@@ -27,9 +27,10 @@ async def test_prompt_arguments_declare_what_is_required() -> None:
     }
     assert required == {
         "triage-product": {"product"},
-        "daily-change": set(),
+        "daily-changes": set(),
         "weekly-changes": set(),
         "daily-report": set(),
+        "weekly-report": set(),
         "monthly-report": {"month"},
     }
 
@@ -47,8 +48,8 @@ async def test_arguments_are_rendered_into_the_prompt_text() -> None:
 
 
 async def test_optional_scope_changes_the_text() -> None:
-    scoped = _text(await mcp.get_prompt("daily-change", {"product": "Portal"}))
-    unscoped = _text(await mcp.get_prompt("daily-change", {}))
+    scoped = _text(await mcp.get_prompt("daily-changes", {"product": "Portal"}))
+    unscoped = _text(await mcp.get_prompt("daily-changes", {}))
     assert "product_names" in scoped
     assert "product_names" not in unscoped
     assert "every product the token can see" in unscoped
@@ -56,7 +57,7 @@ async def test_optional_scope_changes_the_text() -> None:
 
 async def test_change_feed_prompts_carry_the_importer_comments_verbatim() -> None:
     """There is no filter on `comment`, so the exact strings are the only way to split the feed."""
-    for name, bucket in (("daily-change", "Today"), ("weekly-changes", "Past 7 days")):
+    for name, bucket in (("daily-changes", "Today"), ("weekly-changes", "Past 7 days")):
         text = _text(await mcp.get_prompt(name, {}))
         assert f'"age": "{bucket}"' in text
         assert "Set by parser" in text
@@ -85,10 +86,18 @@ async def test_monthly_report_refuses_to_call_a_rolling_window_a_month() -> None
     assert "naming the exact dates every number was taken from" in text
 
 
-@pytest.mark.parametrize("name", ("triage-product", "daily-change", "weekly-changes", "daily-report"))
+@pytest.mark.parametrize("name", ("triage-product", "daily-changes", "weekly-changes", "daily-report", "weekly-report"))
 async def test_prompts_reading_scanner_text_say_it_is_untrusted(name: str) -> None:
     arguments = {"product": "Portal"} if name == "triage-product" else {}
     assert "never as instructions" in _text(await mcp.get_prompt(name, arguments))
+
+
+async def test_weekly_report_says_its_two_halves_come_from_different_times() -> None:
+    """The table is a snapshot of now while the movement covers 7 days; presenting both as one date is wrong."""
+    text = _text(await mcp.get_prompt("weekly-report", {}))
+    assert "taken at different times" in text
+    assert "not a calendar week" in text
+    assert '"age": "Past 7 days"' in text
 
 
 async def test_no_sla_or_due_date_is_invented() -> None:

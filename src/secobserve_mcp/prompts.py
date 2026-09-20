@@ -53,6 +53,12 @@ An unchanged finding re-imported writes no log at all, so this is a change feed 
 
 The default projection carries no product and no title. Ask for them: `fields=["id", "comment", "severity", "status", "assessment_status", "user_full_name", "created", "observation", "observation_data.title", "observation_data.product_data.name", "observation_data.branch_name"]`."""
 
+WEEKLY_WINDOW = """
+`Past 7 days` is a rolling window counted back from local midnight, not a calendar week. Name the first and last date it actually covers.
+
+Break it down by day from each log's `created` timestamp, so a single bad import day is visible rather than averaged away.
+"""
+
 OVERDUE = """SecObserve has no due date and no SLA. Nothing in the backend says when a finding should have been fixed.
 
 If the report uses a word like "overdue", "ageing" or "breaching", define it in the report itself -- for example "Critical, still active, and unchanged for more than 30 days" -- and label it as this report's own definition rather than an instance setting.
@@ -71,7 +77,7 @@ def _scope(product: str | None) -> str:
     )
 
 
-def _change_report(product: str | None, bucket: str, window: str) -> str:
+def _change_report(product: str | None, bucket: str, window: str, notes: str = "") -> str:
     return f"""Report what changed in SecObserve {window}.
 
 {_scope(product)}
@@ -88,6 +94,35 @@ Then report, grouped by product: how many findings are new, how many the parser 
 Name every new Critical and High finding individually with its component and branch; give the rest as counts.
 Call out anything a person assessed that is still in `Needs approval`, since it has not taken effect yet.
 Say plainly when a product produced no log lines at all, and that this means no change rather than no scan.
+{notes}
+{UNTRUSTED}"""
+
+
+def _standing_report(product: str | None, bucket: str, window: str, moved: str, notes: str = "") -> str:
+    return f"""Produce the SecObserve report for {window}: the standing numbers, what moved, and what is still open.
+
+{_scope(product)}
+
+{TIME_BUCKETS}
+
+{METRICS}
+
+{PRODUCT_TABLE}
+
+Build it in three parts.
+
+Standing numbers: one table from `secobserve_list("products")`, a row per product with its active Critical, High, Medium and Low counts, sorted by Critical then High. State under the table which source the counts came from and whether the metrics job has run today.
+
+What moved {moved}: `secobserve_list("observation_logs", filters={{"age": "{bucket}"}}, ordering="-created")`.
+
+{CHANGE_FEED}
+
+{PAGING}
+
+Still open: the Critical and High findings in an active status, from `secobserve_list("observations", filters={{"current_severity": ["Critical", "High"], "current_status": ["Open", "Affected", "In review"]}}, ordering="-current_severity")`, marking the ones carrying `fix_available` true as the cheapest wins.
+Report how many assessments sit in `Needs approval` as well, because those are decided but not yet in effect.
+{notes}
+{OVERDUE}
 
 {UNTRUSTED}"""
 
@@ -126,11 +161,11 @@ Leave anything you cannot decide from evidence alone unassessed, and end the run
 
 
 @mcp.prompt(
-    name="daily-change",
+    name="daily-changes",
     title="What Changed Today",
     description="New, parser-changed, resolved and human-assessed findings since local midnight.",
 )
-def daily_change(product: ProductArg = None) -> str:
+def daily_changes(product: ProductArg = None) -> str:
     return _change_report(product, "Today", "since local midnight today")
 
 
@@ -140,11 +175,7 @@ def daily_change(product: ProductArg = None) -> str:
     description="The same change feed over the past 7 days, with the daily shape of the week.",
 )
 def weekly_changes(product: ProductArg = None) -> str:
-    return f"""{_change_report(product, "Past 7 days", "over the past 7 days")}
-
-`Past 7 days` is a rolling window counted back from local midnight, not a calendar week. Name the first and last date it actually covers.
-
-Break the week down by day from each log's `created` timestamp, so a single bad import day is visible rather than averaged away."""
+    return _change_report(product, "Past 7 days", "over the past 7 days", WEEKLY_WINDOW)
 
 
 @mcp.prompt(
@@ -153,32 +184,19 @@ Break the week down by day from each log's `created` timestamp, so a single bad 
     description="Today's standing counts per product, what moved today, and what is still open.",
 )
 def daily_report(product: ProductArg = None) -> str:
-    return f"""Produce today's SecObserve report: the standing numbers, what moved today, and what is still open.
+    return _standing_report(product, "Today", "today", "today")
 
-{_scope(product)}
 
-{TIME_BUCKETS}
-
-{METRICS}
-
-{PRODUCT_TABLE}
-
-Build it in three parts.
-
-Standing numbers: one table from `secobserve_list("products")`, a row per product with its active Critical, High, Medium and Low counts, sorted by Critical then High. State under the table which source the counts came from and whether the metrics job has run today.
-
-What moved today: `secobserve_list("observation_logs", filters={{"age": "Today"}}, ordering="-created")`.
-
-{CHANGE_FEED}
-
-{PAGING}
-
-Still open: the Critical and High findings in an active status, from `secobserve_list("observations", filters={{"current_severity": ["Critical", "High"], "current_status": ["Open", "Affected", "In review"]}}, ordering="-current_severity")`, marking the ones carrying `fix_available` true as the cheapest wins.
-Report how many assessments sit in `Needs approval` as well, because those are decided but not yet in effect.
-
-{OVERDUE}
-
-{UNTRUSTED}"""
+@mcp.prompt(
+    name="weekly-report",
+    title="Weekly Report",
+    description="Standing counts per product, what moved over the past 7 days, and what is still open.",
+)
+def weekly_report(product: ProductArg = None) -> str:
+    notes = f"""
+The two halves of this report are taken at different times. The standing numbers are a snapshot of right now, while the movement covers the past 7 days, so say so rather than presenting the table as the state at the end of the window.
+{WEEKLY_WINDOW}"""
+    return _standing_report(product, "Past 7 days", "the past 7 days", "over the past 7 days", notes)
 
 
 @mcp.prompt(

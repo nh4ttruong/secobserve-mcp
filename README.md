@@ -45,17 +45,18 @@
 
 ## Prompts
 
-Five prompts, for the work that is a sequence of calls rather than one. A prompt is fetched by name when someone picks it, so it costs nothing per session — unlike a tool schema, which is sent on every connection.
+Six prompts, for the work that is a sequence of calls rather than one. A prompt is fetched by name when someone picks it, so it costs nothing per session — unlike a tool schema, which is sent on every connection.
 
 | Prompt | Purpose |
 | --- | --- |
 | `triage-product` | Work one product's open findings, highest severity and `fix_available` first, assessing each with evidence. |
-| `daily-change` | What changed since local midnight: new, parser-changed, resolved, human-assessed. |
+| `daily-changes` | What changed since local midnight: new, parser-changed, resolved, human-assessed. |
 | `weekly-changes` | The same feed over the past 7 days, broken down by day. |
 | `daily-report` | Today's counts per product, what moved today, what is still open. |
+| `weekly-report` | The same three parts over the past 7 days, for the report someone sends on. |
 | `monthly-report` | A month's closing numbers and the month-over-month delta. |
 
-That is where the caveats live, because they are too long for a tool description and the report is wrong without them: metrics cover the default branch only and answer `200` with every count at zero when the job has not run today; every time filter is a relative bucket, so a calendar month is reconstructed from the timeline's ISO dates instead of approximated with `Past 30 days`; and nothing in SecObserve is a due date or an SLA, so a report that says "overdue" has to define the word itself.
+Each one carries the caveats that decide whether the report is right: metrics cover the default branch only and answer `200` with every count at zero when the job has not run, no filter expresses a calendar month, and nothing in SecObserve is a due date or an SLA.
 
 ## Install
 
