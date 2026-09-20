@@ -10,6 +10,7 @@ Read this before changing code in this repository. It records the current state 
 - Discovery: a static catalogue (`list_resources`) and the instance's live schema (`describe_resource`).
 - An escape hatch for the ~40 named non-CRUD actions (`call_action`).
 - Validated workflows: assessment, bulk assessment, approval, metrics, file upload (observations / SBOM / VEX), API import, scan triggering, periodic tasks, instance status, VEX document generation.
+- MCP Prompts for the work that is a sequence of calls rather than one: triage and the daily / weekly / monthly reports.
 
 Project priorities, in order:
 
@@ -40,7 +41,7 @@ Do not expand into these without the user asking.
 - Container: `Dockerfile` (two stages, `python:3.13-slim`, non-root), published to `ghcr.io/nh4ttruong/secobserve-mcp` by the release workflow. Defaults to HTTP on 0.0.0.0:8931 and serves `GET /healthz` — liveness only, it never calls SecObserve.
 - CI: `.github/workflows/ci.yml` on every push to `main` and every pull request — ruff and mypy once, `pytest` on 3.11, 3.12, 3.13 and 3.14. `release.yml` re-runs the same checks on the tag, because the tagged commit is what ships.
 - Current version: `0.2.2`.
-- Baseline when this file was updated: 57 tests passing, ruff and mypy strict clean, stdio handshake and streamable HTTP both verified against a live instance.
+- Baseline when this file was updated: 85 tests passing, ruff and mypy strict clean, stdio handshake and streamable HTTP both verified against a live instance.
 
 ## Code structure
 
@@ -56,6 +57,7 @@ src/secobserve_mcp/
 ├── types.py            # enums mirrored from the backend (Severity, Status, VEX, ...)
 ├── tools_crud.py       # 8 generic and discovery tools
 ├── tools_workflows.py  # 10 validated workflow tools
+├── prompts.py          # 6 MCP Prompts: triage, the change feeds and the reports
 └── __main__.py         # argparse, --check, transport selection
 
 evals/seed.py           # seeds the dataset evaluation.xml asks about, via the server's own tools
@@ -92,6 +94,7 @@ When the backend changes its contract, update `registry.py` and the matching tes
 - Cross-field rules live at the top of the tool body as `raise ValueError(...)`, which `@tool_errors` turns into text the agent can act on.
 - The docstring is the tool description the agent sees. It must carry: a one-line summary, Args with types and constraints, Returns with the schema of the JSON returned, Examples including "Don't use when", and Error Handling.
 - Every tool carries `@tool_errors` directly below `@mcp.tool(...)`.
+- Prompts do not count against the 18. A tool's schema is sent on every connection; a prompt's text is fetched by name when it is used, which is why the long-form caveats live in `prompts.py` and not in a tool description. A prompt is never a way to smuggle in a tool.
 
 ## Context invariants
 

@@ -43,6 +43,21 @@
 | `secobserve_status` | Version, health, public settings, queue statistics, PURL types. |
 | `secobserve_vex_document` | Generate or revise a CSAF / OpenVEX / CycloneDX document. |
 
+## Prompts
+
+Six prompts, for the work that is a sequence of calls rather than one. A prompt is fetched by name when someone picks it, so it costs nothing per session — unlike a tool schema, which is sent on every connection.
+
+| Prompt | Purpose |
+| --- | --- |
+| `triage-product` | Work one product's open findings, highest severity and `fix_available` first, assessing each with evidence. |
+| `daily-changes` | What changed since local midnight: new, parser-changed, resolved, human-assessed. |
+| `weekly-changes` | The same feed over the past 7 days, broken down by day. |
+| `daily-report` | Today's counts per product, what moved today, what is still open. |
+| `weekly-report` | The same three parts over the past 7 days, for the report someone sends on. |
+| `monthly-report` | A month's closing numbers and the month-over-month delta. |
+
+Each one carries the caveats that decide whether the report is right: metrics cover the default branch only and answer `200` with every count at zero when the job has not run, no filter expresses a calendar month, and nothing in SecObserve is a due date or an SLA.
+
 ## Install
 
 ```bash
