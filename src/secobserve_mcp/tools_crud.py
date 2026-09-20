@@ -66,27 +66,43 @@ def _resolve_fields(resource: Resource, requested: list[str] | None) -> tuple[tu
     return resource.list_fields, note
 
 
-async def _reject_unknown_filters(resource_name: str, resource: Resource, filters: dict[str, Any] | None) -> None:
-    """Fail loudly on a filter the endpoint does not know.
+async def _validate_filters(resource_name: str, resource: Resource, filters: dict[str, Any] | None) -> None:
+    """Fail loudly on a filter the endpoint would silently mishandle.
 
     django-filter drops unrecognised query parameters silently, so a misspelled or
     invented filter returns the full unfiltered list -- which an agent would report
-    as a confident, wrong answer. Checking against the live schema turns that into
-    an error naming the filters that do exist.
+    as a confident, wrong answer. It is just as silent about several values on a
+    filter that takes one: the last value wins and the rest are dropped. Checking
+    against the live schema turns both into an error naming the filter.
     """
     if not filters:
         return
     accepted = await schema_reader.query_parameters(resource.path)
     if not accepted:
         return
-    unknown = sorted(set(filters) - accepted)
-    if not unknown:
-        return
-    raise SecObserveError(
-        f"{', '.join(unknown)} {'is not a filter' if len(unknown) == 1 else 'are not filters'} "
-        f"of '{resource_name}', and the API would ignore it and return unfiltered results. "
-        f"Accepted filters: {', '.join(sorted(accepted - {'page', 'page_size', 'ordering', 'search'}))}."
+
+    unknown = sorted(set(filters) - set(accepted))
+    if unknown:
+        raise SecObserveError(
+            f"{', '.join(unknown)} {'is not a filter' if len(unknown) == 1 else 'are not filters'} "
+            f"of '{resource_name}', and the API would ignore it and return unfiltered results. "
+            f"Accepted filters: {', '.join(sorted(set(accepted) - {'page', 'page_size', 'ordering', 'search'}))}."
+        )
+
+    # Only a type the schema states positively is worth rejecting on: an under-specified
+    # parameter is passed through, exactly as an unreadable schema is.
+    single_valued = sorted(
+        name
+        for name, value in filters.items()
+        if isinstance(value, (list, tuple, set)) and len(value) > 1 and accepted[name] not in (None, "array")
     )
+    if single_valued:
+        raise SecObserveError(
+            f"{', '.join(single_valued)} {'takes' if len(single_valued) == 1 else 'take'} a single value on "
+            f"'{resource_name}', and the API would keep only the last one of the list and silently drop the rest. "
+            f"Call secobserve_list once per value and add the totals up, or check "
+            f"secobserve_describe_resource for a filter typed 'array', which does accept a list."
+        )
 
 
 @mcp.tool(
@@ -273,8 +289,9 @@ async def secobserve_list(
             description=(
                 "Query parameters as accepted by the endpoint, e.g. "
                 "{'product': 12, 'current_status': ['Open', 'In review'], 'current_severity': 'Critical'}. "
-                "A list value is sent as a repeated parameter. Call secobserve_describe_resource for the "
-                "exact names."
+                "A list value is only accepted on a filter the schema types as 'array'; on a single-valued "
+                "filter it is refused, because the API would keep one value and drop the rest. Call "
+                "secobserve_describe_resource for the exact names and types."
             )
         ),
     ] = None,
@@ -320,8 +337,9 @@ async def secobserve_list(
 
     Args:
         resource (str): Resource name (e.g. "observations").
-        filters (Optional[dict]): Query parameters; list values are repeated
-          (e.g. {"product": 12, "current_status": ["Open", "In review"]}).
+        filters (Optional[dict]): Query parameters. A list is repeated as one
+          parameter per value and works only where the schema types the filter
+          as "array" (e.g. {"product": 12, "current_status": ["Open", "In review"]}).
         search (Optional[str]): Free-text search where supported.
         ordering (Optional[str]): Sort field, '-' prefix to reverse.
         page (int): 1-based page number (default 1).
@@ -359,13 +377,14 @@ async def secobserve_list(
 
     Error Handling:
         Unknown resource -> error listing the closest valid names.
-        Unknown filter -> the API's 400 body is returned verbatim, naming the field.
+        Unknown filter -> refused before the request, listing the filters that exist.
+        List on a single-valued filter -> refused; call once per value instead.
         Read-only mode does not affect this tool.
     """
     resource_def = get_resource(resource)
     _require_op(resource, resource_def, LIST)
 
-    await _reject_unknown_filters(resource, resource_def, filters)
+    await _validate_filters(resource, resource_def, filters)
 
     query: dict[str, Any] = dict(filters or {})
     query["page"] = page

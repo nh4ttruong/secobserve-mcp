@@ -44,7 +44,22 @@ SCHEMA = {
                     "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ObservationCreate"}}}
                 }
             },
-        }
+        },
+        # Shapes copied from the live schema: a MultipleChoiceFilter is an array parameter,
+        # an auto-generated exact filter a scalar, and a method filter carries no type at all.
+        "/api/observation_logs/": {
+            "get": {
+                "parameters": [
+                    {
+                        "name": "severity",
+                        "in": "query",
+                        "schema": {"type": "string", "enum": ["Critical", "High"]},
+                    },
+                    {"name": "age", "in": "query", "schema": {"enum": ["Today", "Past 7 days"]}},
+                    {"name": "product", "in": "query", "schema": {"type": "integer"}},
+                ]
+            }
+        },
     },
     "components": {
         "schemas": {
@@ -179,3 +194,74 @@ async def test_metrics_falls_back_to_the_static_catalogue() -> None:
     assert "Static catalogue" in result
     assert "none, actions only" in result
     assert "export_codecharta" in result
+
+
+@respx.mock
+async def test_a_list_passes_on_a_filter_typed_as_an_array() -> None:
+    """current_severity is a MultipleChoiceFilter: repeated values are an OR and must keep working."""
+    schema._schema = None
+    respx.get(f"{API}/oa3/schema/").mock(return_value=httpx.Response(200, json=SCHEMA))
+    listing = respx.get(f"{API}/observations/").mock(return_value=httpx.Response(200, json={"count": 0, "results": []}))
+
+    await secobserve_list(resource="observations", filters={"current_severity": ["Critical", "High"]})
+
+    sent = str(listing.calls.last.request.url)
+    assert "current_severity=Critical" in sent and "current_severity=High" in sent
+
+
+@respx.mock
+async def test_a_list_on_a_single_valued_filter_is_rejected() -> None:
+    """The endpoint would keep the last value only and answer 200, so the count would be wrong."""
+    schema._schema = None
+    respx.get(f"{API}/oa3/schema/").mock(return_value=httpx.Response(200, json=SCHEMA))
+    listing = respx.get(f"{API}/observation_logs/").mock(
+        return_value=httpx.Response(200, json={"count": 0, "results": []})
+    )
+
+    result = await secobserve_list(resource="observation_logs", filters={"severity": ["Critical", "High"]})
+
+    assert "severity takes a single value" in result
+    assert "once per value" in result, "the error must say what to do instead"
+    assert not listing.called, "the request must not be sent at all"
+
+
+@respx.mock
+async def test_a_single_value_passes_on_a_single_valued_filter() -> None:
+    schema._schema = None
+    respx.get(f"{API}/oa3/schema/").mock(return_value=httpx.Response(200, json=SCHEMA))
+    listing = respx.get(f"{API}/observation_logs/").mock(
+        return_value=httpx.Response(200, json={"count": 0, "results": []})
+    )
+
+    await secobserve_list(resource="observation_logs", filters={"severity": "Critical"})
+    # One value in a list loses nothing, so it is not worth refusing.
+    await secobserve_list(resource="observation_logs", filters={"severity": ["Critical"]})
+
+    assert listing.call_count == 2
+
+
+@respx.mock
+async def test_a_list_passes_on_a_parameter_the_schema_does_not_type() -> None:
+    """age is a method filter with no type: the schema does not say it is single-valued, so it is not blocked."""
+    schema._schema = None
+    respx.get(f"{API}/oa3/schema/").mock(return_value=httpx.Response(200, json=SCHEMA))
+    listing = respx.get(f"{API}/observation_logs/").mock(
+        return_value=httpx.Response(200, json={"count": 0, "results": []})
+    )
+
+    await secobserve_list(resource="observation_logs", filters={"age": ["Today", "Past 7 days"]})
+
+    assert listing.called
+
+
+@respx.mock
+async def test_a_list_passes_when_the_schema_is_unavailable() -> None:
+    schema._schema = None
+    respx.get(f"{API}/oa3/schema/").mock(return_value=httpx.Response(503))
+    listing = respx.get(f"{API}/observation_logs/").mock(
+        return_value=httpx.Response(200, json={"count": 0, "results": []})
+    )
+
+    await secobserve_list(resource="observation_logs", filters={"severity": ["Critical", "High"]})
+
+    assert listing.called
