@@ -27,7 +27,10 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "mcp>=2.2,<3",
+    # One minor, not the whole 2.x range: the per-request credential is bound on `Server.middleware`, which the SDK
+    # marks provisional and may change within a minor. A fresh install resolves this range with no test run against
+    # it, and a hook that stops binding is silent, so lifting this is a human's decision and a suite run.
+    "mcp>=2.2,<2.3",
     "httpx>=0.27",
     "pydantic>=2.7",
     "starlette>=0.27",
