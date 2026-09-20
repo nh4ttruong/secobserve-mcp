@@ -134,15 +134,19 @@ async def describe_path(path: str) -> dict[str, Any]:
     return described
 
 
-async def query_parameters(path: str) -> set[str]:
-    """Names of the query parameters the instance accepts on GET <path>.
+async def query_parameters(path: str) -> dict[str, str | None]:
+    """Query parameters the instance accepts on GET <path>, each mapped to its schema type.
 
     Empty when the schema is unavailable, which callers must read as "cannot
-    validate" rather than "nothing is allowed".
+    validate" rather than "nothing is allowed". A type of None means the schema
+    under-specifies the parameter, which is equally unsafe to validate against.
+
+    drf-spectacular types a parameter as "array" exactly when its filter takes
+    repeated values, so any other type is a filter that keeps one value only.
     """
     try:
         described = await describe_path(path)
     except Exception:  # noqa: BLE001 - validation is best-effort; the API stays the authority
-        return set()
+        return {}
     get = described.get("GET") or {}
-    return {p["name"] for p in get.get("parameters", []) if p.get("name")}
+    return {p["name"]: p.get("type") for p in get.get("parameters", []) if p.get("name")}
