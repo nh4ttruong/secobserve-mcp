@@ -214,4 +214,4 @@ The seed script drives the server's own tools, so a clean run is also an end-to-
 
 ---
 
-Repository conventions and invariants for agents working on this code: [AGENTS.md](AGENTS.md).
+How to set up and propose a change: [CONTRIBUTING.md](CONTRIBUTING.md). Invariants and working process for AI agents changing this code: [AGENTS.md](AGENTS.md).
