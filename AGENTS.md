@@ -22,7 +22,7 @@ Project priorities, in order:
 Out of scope today:
 
 - Changing the SecObserve backend.
-- Duplicating `secobserve-cli` (multi-file Excel/CSV export, migration scripts, GitOps config apply). This server only calls the backend's own export endpoints.
+- Rebuilding what the backend already does: report rendering, multi-file export pipelines, migration scripts, GitOps config apply. This server only calls the backend's own export endpoints and returns what they give it.
 - A per-endpoint resource layer: adding one tool per endpoint works against the design, see [Tool surface invariants](#tool-surface-invariants).
 - Caching business data. Only the OpenAPI schema is cached, and only within one process.
 
