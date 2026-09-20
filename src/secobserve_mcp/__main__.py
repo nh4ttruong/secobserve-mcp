@@ -41,8 +41,8 @@ EPILOG = f"""environment:
 
 
 def _load_tools() -> None:
-    # Imported for the @mcp.tool registrations they perform.
-    from . import tools_crud, tools_workflows  # noqa: F401
+    # Imported for the @mcp.tool and @mcp.prompt registrations they perform.
+    from . import prompts, tools_crud, tools_workflows  # noqa: F401
 
 
 TOKEN_PLACEHOLDER = "<your-api-token>"

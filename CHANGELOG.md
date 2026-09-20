@@ -7,6 +7,7 @@ Notable changes per release. Format follows [Keep a Changelog](https://keepachan
 ### Added
 
 - A `metrics` resource in the catalogue, so `secobserve_call_action` reaches `export_excel`, `export_csv` and `export_codecharta`. Their summaries carry the warning that the endpoint reads only `product_id` and ignores any other parameter name, which exports the whole instance instead of failing.
+- Five MCP Prompts — `triage-product`, `daily-change`, `weekly-changes`, `daily-report`, `monthly-report` — for the workflows that are a sequence of calls. A prompt is fetched by name when it is used, so it costs nothing per session, unlike a tool schema which is sent on every connection; the tool surface stays at 18. They carry the caveats a correct report depends on: metrics cover the default branch only and return zeros with `200` when today's rows are missing, every time filter is a relative bucket so a calendar month has to be reconstructed from the timeline, and the backend has no due date or SLA to call something overdue against.
 
 ### Fixed
 
