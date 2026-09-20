@@ -195,6 +195,25 @@ async def test_binary_action_is_written_to_the_export_directory() -> None:
 
 
 @respx.mock
+async def test_metrics_export_is_written_to_the_export_directory() -> None:
+    respx.get(f"{API}/metrics/export_excel/").mock(return_value=httpx.Response(200, content=b"PK\x03\x04metrics"))
+
+    result = await secobserve_call_action(resource="metrics", action="export_excel")
+
+    written = Path(config.get_config().export_dir) / "metrics-export_excel.xlsx"
+    assert written.exists()
+    assert str(written) in result
+
+
+async def test_listing_an_actions_only_resource_points_at_the_tool_that_reads_it() -> None:
+    result = await secobserve_list(resource="metrics")
+
+    assert "no CRUD operations" in result
+    assert "secobserve_product_metrics" in result
+    assert "export_codecharta" in result
+
+
+@respx.mock
 async def test_export_filename_cannot_escape_the_export_directory() -> None:
     respx.get(f"{API}/products/12/export_observations_csv/").mock(return_value=httpx.Response(200, content=b"a,b"))
 

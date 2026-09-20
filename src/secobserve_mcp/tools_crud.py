@@ -33,12 +33,22 @@ ResponseFormatArg = Annotated[
 ]
 
 
+def _ops_text(resource: Resource) -> str:
+    return ", ".join(sorted(resource.ops)) or "none, actions only"
+
+
 def _require_op(resource_name: str, resource: Resource, op: str) -> None:
-    if op not in resource.ops:
+    if op in resource.ops:
+        return
+    actions = f" Its named actions are: {', '.join(a.name for a in resource.actions)}." if resource.actions else ""
+    if not resource.ops:
         raise SecObserveError(
-            f"Resource '{resource_name}' does not support '{op}' (it supports: {', '.join(sorted(resource.ops))}). "
-            f"{'Its named actions are: ' + ', '.join(a.name for a in resource.actions) + '.' if resource.actions else ''}"
+            f"Resource '{resource_name}' has no CRUD operations; reach it with secobserve_call_action. "
+            f"{resource.summary}{actions}"
         )
+    raise SecObserveError(
+        f"Resource '{resource_name}' does not support '{op}' (it supports: {_ops_text(resource)}).{actions}"
+    )
 
 
 def _resolve_fields(resource: Resource, requested: list[str] | None) -> tuple[tuple[str, ...] | None, str | None]:
@@ -130,7 +140,7 @@ async def secobserve_list_resources(
         shown += 1
         lines.append(f"## {name}")
         lines.append(f"- path: `{resource.path}`")
-        lines.append(f"- operations: {', '.join(sorted(resource.ops))}")
+        lines.append(f"- operations: {_ops_text(resource)}")
         lines.append(f"- {resource.summary}")
         if resource.list_fields:
             lines.append(f"- default list fields: {', '.join(resource.list_fields)}")
@@ -216,10 +226,14 @@ async def secobserve_describe_resource(
         described[detail_path] = await schema_reader.describe_path(detail_path)
 
     if not any(described.values()):
+        catalogue = [f"operations {_ops_text(resource_def)}"]
+        if resource_def.list_fields:
+            catalogue.append(f"default list fields {', '.join(resource_def.list_fields)}")
+        if resource_def.actions:
+            catalogue.append(f"actions {', '.join(a.name for a in resource_def.actions)}")
         return (
             f"The instance's OpenAPI schema has no entry for {resource_def.path}. "
-            f"Static catalogue: operations {', '.join(sorted(resource_def.ops))}; "
-            f"default list fields {', '.join(resource_def.list_fields) or 'all'}."
+            f"Static catalogue: {'; '.join(catalogue)}."
         )
 
     return json.dumps(

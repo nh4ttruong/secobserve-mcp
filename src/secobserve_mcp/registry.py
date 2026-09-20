@@ -219,6 +219,39 @@ RESOURCES: dict[str, Resource] = {
         summary="Id/name pairs of services.",
         list_fields=("id", "name"),
     ),
+    # --- metrics ------------------------------------------------------------
+    "metrics": Resource(
+        path="/metrics/",
+        ops=frozenset(),
+        summary="File exports of product metrics; read the numbers themselves with secobserve_product_metrics.",
+        actions=(
+            Action(
+                "export_excel",
+                "GET",
+                False,
+                "Product metrics as XLSX. Scope it with params={'product_id': N}; the endpoint reads that one "
+                "parameter and ignores every other name, so a typo exports the whole instance instead of failing.",
+                binary=True,
+            ),
+            Action(
+                "export_csv",
+                "GET",
+                False,
+                "Product metrics as CSV. Scope it with params={'product_id': N}; the endpoint reads that one "
+                "parameter and ignores every other name, so a typo exports the whole instance instead of failing.",
+                binary=True,
+            ),
+            Action(
+                "export_codecharta",
+                "GET",
+                False,
+                "Per-source-file counts for the product's default branch, as CodeCharta CSV. "
+                "params={'product_id': N} is required here and the call fails without it, but any other parameter "
+                "name is still ignored rather than reported.",
+                binary=True,
+            ),
+        ),
+    ),
     # --- observations -------------------------------------------------------
     "observations": Resource(
         path="/observations/",
