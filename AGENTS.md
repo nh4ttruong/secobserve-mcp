@@ -60,6 +60,7 @@ src/secobserve_mcp/
 ├── prompts.py          # 6 MCP Prompts: triage, the change feeds and the reports
 └── __main__.py         # argparse, --check, transport selection
 
+scripts/release.py      # version bump, changelog stamp, checks, commit and tag -- never pushes
 evals/seed.py           # seeds the dataset evaluation.xml asks about, via the server's own tools
 evaluation.xml          # 26 read-only questions with verified answers
 ```
@@ -257,7 +258,9 @@ Rules that matter more than the template:
 
 Versions live in `pyproject.toml`, `server.json` and the git tag, and the release workflow fails when they disagree. The Python module reads its version from installed package metadata, so it is never edited by hand.
 
-To release: bump `pyproject.toml` and `server.json`, commit as `chore(release): v<x.y.z>`, then tag `v<x.y.z>` and push the tag. The workflow runs the checks, publishes to PyPI via trusted publishing, and registers with the MCP Registry via GitHub OIDC.
+To release: `uv run python scripts/release.py <x.y.z>`. It refuses unless `main` is clean and matches `origin/main` and the tag does not already exist anywhere, runs the four checks first so a failure leaves the tree untouched, then bumps `pyproject.toml`, both version fields in `server.json` and `Current version` above, stamps `[Unreleased]` in the changelog with its two compare links, commits as `chore(release): v<x.y.z>` and tags.
+
+It never pushes. `git push origin main && git push origin v<x.y.z>` stays manual, because that is the step that cannot be undone. The workflow then runs the checks again on the tag, publishes to PyPI via trusted publishing, registers with the MCP Registry via GitHub OIDC, builds the multi-arch image and creates the GitHub release.
 
 A published version is permanent. PyPI does not allow re-uploading a version, so a bad release is fixed by releasing the next patch, never by retagging.
 
