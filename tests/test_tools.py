@@ -358,6 +358,59 @@ async def test_timeline_and_status_ask_for_nothing_extra() -> None:
     assert timeline.call_count == 1
 
 
+def day(offset: int) -> str:
+    """An ISO date `offset` days back, so the expected window does not depend on when the test runs."""
+    return (datetime.now(UTC).astimezone().date() - timedelta(days=offset)).isoformat()
+
+
+DELTA_TIMELINE = {
+    day(10): {"active_critical": 4, "open": 20},
+    day(5): {"active_critical": 6, "open": 18},
+    day(1): {"active_critical": 2, "open": 11, "risk_accepted": 3},
+}
+
+
+@respx.mock
+async def test_delta_reports_the_dates_it_actually_used() -> None:
+    route = respx.get(f"{API}/metrics/product_metrics_timeline/").mock(
+        return_value=httpx.Response(200, json=DELTA_TIMELINE)
+    )
+
+    payload = json.loads(await call("secobserve_product_metrics", kind="delta", since=day(8)))
+
+    assert payload["since"] == {"requested": day(8), "used": day(10)}
+    assert payload["until"] == {"requested": day(0), "used": day(1)}
+    assert payload["delta"] == {"active_critical": -2, "open": -9, "risk_accepted": 3}
+    assert payload["missing_days"] == 7
+    assert route.calls.last.request.url.params["age"] == "Past 30 days"
+    assert route.call_count == 1
+
+
+@respx.mock
+async def test_delta_refuses_a_since_the_instance_no_longer_retains() -> None:
+    respx.get(f"{API}/metrics/product_metrics_timeline/").mock(return_value=httpx.Response(200, json=DELTA_TIMELINE))
+
+    result = await call("secobserve_product_metrics", kind="delta", since=day(400), until=day(2))
+
+    assert f"the earliest date with metrics is {day(10)}" in result
+
+
+async def test_delta_refuses_a_range_that_runs_backwards() -> None:
+    result = await call("secobserve_product_metrics", kind="delta", since="2026-08-31", until="2026-08-01")
+
+    assert "is after until=2026-08-01" in result
+
+
+async def test_delta_needs_a_since() -> None:
+    assert "needs since=" in await call("secobserve_product_metrics", kind="delta")
+
+
+async def test_a_date_range_is_refused_on_the_other_kinds() -> None:
+    result = await call("secobserve_product_metrics", kind="timeline", since="2026-08-01")
+
+    assert "belong to kind='delta'" in result
+
+
 async def test_upload_refuses_a_path_outside_the_import_directory(tmp_path: Path) -> None:
     outside = tmp_path / "secret.json"
     outside.write_text("{}")

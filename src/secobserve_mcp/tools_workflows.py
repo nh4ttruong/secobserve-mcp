@@ -403,6 +403,52 @@ def _local_date(timestamp: Any) -> date | None:
     return parsed.astimezone().date() if parsed.tzinfo else parsed.date()
 
 
+_AGE_DAYS: dict[MetricsAge, int] = {
+    MetricsAge.WEEK: 7,
+    MetricsAge.MONTH: 30,
+    MetricsAge.QUARTER: 90,
+    MetricsAge.YEAR: 365,
+}
+
+
+def _timeline_age(since: date, today: date) -> MetricsAge | None:
+    """The smallest window that still reaches back to `since`, or None for the full retained history.
+
+    A day of slack, because the backend cuts the window on its own clock and that may already be tomorrow.
+    """
+    needed = (today - since).days + 1
+    for age, days in _AGE_DAYS.items():
+        if needed <= days:
+            return age
+    return None
+
+
+def _metrics_delta(timeline: Any, since: date, until: date) -> dict[str, Any]:
+    """Subtract two days of the timeline, each taken from the nearest retained date at or before its bound."""
+    dates = sorted(timeline) if isinstance(timeline, dict) else []
+    at_or_before_since = [day for day in dates if day <= since.isoformat()]
+    if not at_or_before_since:
+        earliest = f"the earliest date with metrics is {dates[0]}" if dates else "the timeline came back empty"
+        raise ValueError(
+            f"No metrics are retained on or before since={since.isoformat()}: {earliest}. "
+            "Move since forward, or read kind='timeline' to see what the instance still holds."
+        )
+
+    start_day = at_or_before_since[-1]
+    end_day = max(day for day in dates if day <= until.isoformat())
+    start = timeline[start_day]
+    end = timeline[end_day]
+    span = (date.fromisoformat(end_day) - date.fromisoformat(start_day)).days + 1
+    return {
+        "since": {"requested": since.isoformat(), "used": start_day},
+        "until": {"requested": until.isoformat(), "used": end_day},
+        "start": start,
+        "end": end,
+        "delta": {key: int(end.get(key, 0)) - int(start.get(key, 0)) for key in sorted(set(start) | set(end))},
+        "missing_days": span - sum(1 for day in dates if start_day <= day <= end_day),
+    }
+
+
 @mcp.tool(
     name="secobserve_product_metrics",
     title="Read SecObserve Metrics",
@@ -416,11 +462,12 @@ def _local_date(timestamp: Any) -> date | None:
 @tool_errors
 async def secobserve_product_metrics(
     kind: Annotated[
-        Literal["current", "timeline", "status"],
+        Literal["current", "timeline", "status", "delta"],
         Field(
             description=(
                 "'current' = observation counts by severity and status as of the last calculation; "
-                "'timeline' = one entry per day; 'status' = when metrics were last calculated "
+                "'timeline' = one entry per day; 'delta' = the signed change between since and until; "
+                "'status' = when metrics were last calculated "
                 "and how often, which tells you how stale 'current' is."
             )
         ),
@@ -439,6 +486,23 @@ async def secobserve_product_metrics(
         MetricsAge | None,
         Field(description="Time window, for kind='timeline' only. Omit for the full retained history."),
     ] = None,
+    since: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Start of the range for kind='delta', ISO YYYY-MM-DD. The nearest date with metrics at or before "
+                "it is used, and the result names it."
+            ),
+            pattern=r"^\d{4}-\d{2}-\d{2}$",
+        ),
+    ] = None,
+    until: Annotated[
+        str | None,
+        Field(
+            description="End of the range for kind='delta', ISO YYYY-MM-DD. Defaults to today, resolved like since.",
+            pattern=r"^\d{4}-\d{2}-\d{2}$",
+        ),
+    ] = None,
     response_format: Annotated[ResponseFormat, Field(description="Output format.")] = ResponseFormat.JSON,
 ) -> str:
     """Read pre-aggregated observation counts for a product, a group, or the whole instance.
@@ -450,24 +514,31 @@ async def secobserve_product_metrics(
 
     License counts are not in here: use secobserve_list("products") for the per-product `*_licenses_count` fields, or the `license_overview` action on `license_components` for counts grouped by license.
 
+    kind="delta" answers "what changed between these two dates", which the API itself cannot: it offers relative windows only, has no delta endpoint, and its timeline skips the days the background job did not run.
+
     Args:
-        kind (str): "current", "timeline" or "status".
+        kind (str): "current", "timeline", "delta" or "status".
         product_id (Optional[int]): One product, or every product in a group
           when the id is a product group. Omit for the instance.
         age (Optional[MetricsAge]): Window for "timeline": "Past 7 days",
           "Past 30 days", "Past 90 days", "Past 365 days".
+        since (Optional[str]): Start of the range for "delta", YYYY-MM-DD.
+        until (Optional[str]): End of the range for "delta", YYYY-MM-DD, today when omitted.
         response_format (ResponseFormat): "json" (default) or "markdown".
 
     Returns:
         str: For kind="current", a JSON object of fifteen counts: six by severity (active_critical, active_high, active_medium, active_low, active_none, active_unknown) and nine by status (open, affected, resolved, duplicate, false_positive, in_review, not_affected, not_security, risk_accepted).
              It carries an extra "stale" block when the job has not run today, because the endpoint then answers 200 with every count at zero instead of failing.
              For kind="timeline", a JSON object keyed by ISO date, each value the counts for that day.
+             For kind="delta", {"since": {"requested", "used"}, "until": {"requested", "used"}, "start": counts, "end": counts, "delta": signed change per counter, "missing_days": days in the range the job never wrote}.
+             Quote "used" rather than "requested" whenever they differ, since the counts come from the dates that exist.
              For kind="status", {"last_calculated": ISO timestamp, "calculation_interval": minutes}.
 
     Examples:
         - Use when: "how many critical findings are open in product 12?" ->
           kind="current", product_id=12
         - Use when: "is our backlog growing?" -> kind="timeline", age="Past 90 days"
+        - Use when: "what changed in August?" -> kind="delta", since="2026-08-01", until="2026-08-31"
         - Use when: a metric looks wrong -> kind="status", to check the job has run.
         - Don't use when: you need the findings themselves (use secobserve_list).
         - Don't use when: you need license counts, see above.
@@ -476,8 +547,33 @@ async def secobserve_product_metrics(
         403 means no view permission on the product. An empty timeline usually
         means the metrics job has not run yet for that window -- check kind="status".
         A "stale" block on kind="current" is not an error, but the zeros under it are not an answer: report the staleness instead of the counts.
+        kind="delta" refuses a since after until, a since older than everything the instance retains (the error names the earliest date it has), and since or until on another kind.
     """
-    if kind == "status":
+    if (since or until) and kind != "delta":
+        raise ValueError(
+            f"since and until belong to kind='delta', not kind='{kind}'. "
+            "Use kind='delta' to compare two dates, or kind='timeline' with age for a whole window."
+        )
+
+    if kind == "delta":
+        if since is None:
+            raise ValueError("kind='delta' needs since='YYYY-MM-DD'. until is optional and defaults to today.")
+        today = datetime.now(UTC).astimezone().date()
+        since_date = date.fromisoformat(since)
+        until_date = date.fromisoformat(until) if until else today
+        if since_date > until_date:
+            raise ValueError(f"since={since_date.isoformat()} is after until={until_date.isoformat()}. Swap them.")
+        window = _timeline_age(since_date, today)
+        payload = _metrics_delta(
+            await request(
+                "GET",
+                "/metrics/product_metrics_timeline/",
+                params={"product_id": product_id, "age": window.value if window else None},
+            ),
+            since_date,
+            until_date,
+        )
+    elif kind == "status":
         payload = await request("GET", "/metrics/product_metrics_status/")
     elif kind == "current":
         payload = await request("GET", "/metrics/product_metrics_current/", params={"product_id": product_id})
