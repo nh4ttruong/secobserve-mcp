@@ -258,6 +258,10 @@ Rules that matter more than the template:
 
 Versions live in `pyproject.toml`, `server.json` and the git tag, and the release workflow fails when they disagree. The Python module reads its version from installed package metadata, so it is never edited by hand.
 
+Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). While this is `0.x` the middle number carries features **and** breaking changes, and only the last number is reserved for fixes, so a minor bump below 1.0.0 may still break.
+
+Breaking is judged against an already-configured client, not against the Python code: a tool or prompt renamed or removed, an argument renamed, an argument becoming required, a value dropped from an enum, an existing output field changing shape, or an environment variable renamed. Adding a tool, a prompt, an optional argument, an enum member or a new key to an output is not breaking.
+
 To release: `uv run python scripts/release.py <x.y.z>`. It refuses unless `main` is clean and matches `origin/main` and the tag does not already exist anywhere, runs the four checks first so a failure leaves the tree untouched, then bumps `pyproject.toml`, both version fields in `server.json` and `Current version` above, commits as `chore(release): v<x.y.z>` and tags.
 
 It never pushes. `git push origin main && git push origin v<x.y.z>` stays manual, because that is the step that cannot be undone. The workflow then runs the checks again on the tag, publishes to PyPI via trusted publishing, registers with the MCP Registry via GitHub OIDC, builds the multi-arch image and creates the GitHub release.
