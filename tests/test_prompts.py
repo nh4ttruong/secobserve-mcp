@@ -11,6 +11,9 @@ from secobserve_mcp.app import mcp
 EXPECTED = {"triage-product", "daily-changes", "weekly-changes", "daily-report", "weekly-report", "monthly-report"}
 METRICS_PROMPTS = ("daily-report", "weekly-report", "monthly-report")
 CHANGE_FEED_PROMPTS = ("daily-changes", "weekly-changes", "daily-report", "weekly-report", "monthly-report")
+STANDING_PROMPTS = ("daily-report", "weekly-report")
+REPORT_PROMPTS = ("daily-report", "weekly-report", "monthly-report")
+FIXED_SECTIONS = ("■ ACT TODAY", "■ CAN I TRUST THIS", "■ DEBT")
 
 
 async def test_every_prompt_is_registered() -> None:
@@ -136,6 +139,97 @@ async def test_no_sla_or_due_date_is_invented() -> None:
     text = _text(await mcp.get_prompt("daily-report", {}))
     assert "no due date and no SLA" in text
     assert "this report's own definition" in text
+
+
+@pytest.mark.parametrize("name", STANDING_PROMPTS)
+async def test_the_standing_report_shape_is_fixed_before_it_is_filled(name: str) -> None:
+    """A section that only prints when it has content makes every run a different report."""
+    text = _text(await mcp.get_prompt(name, {}))
+
+    for heading in FIXED_SECTIONS:
+        assert heading in text
+    assert "produce nothing else" in text
+    assert "Copy the four headings character for character" in text
+    assert "give an empty section one line holding a single em dash" in text
+
+
+async def test_only_the_movement_heading_differs_between_the_two_standing_reports() -> None:
+    daily = _text(await mcp.get_prompt("daily-report", {}))
+    weekly = _text(await mcp.get_prompt("weekly-report", {}))
+
+    assert "■ CHANGED TODAY" in daily and "■ CHANGED THIS WEEK" not in daily
+    assert "■ CHANGED THIS WEEK" in weekly and "■ CHANGED TODAY" not in weekly
+
+
+@pytest.mark.parametrize("name", STANDING_PROMPTS)
+async def test_the_gate_gap_is_required_and_both_operands_count_the_same_statuses(name: str) -> None:
+    """Metrics count only the active statuses; an observations side counting anything else is wrong by five figures."""
+    text = _text(await mcp.get_prompt(name, {}))
+
+    assert "Critical outside the gate" in text
+    assert "counts exactly `Open`, `Affected` and `In review`" in text
+    assert '"current_status": ["Open", "Affected", "In review"]' in text
+    assert 'active_critical` of `secobserve_product_metrics(kind="current")' in text
+
+
+@pytest.mark.parametrize("name", CHANGE_FEED_PROMPTS)
+async def test_the_change_feed_taxonomy_names_the_rule_written_logs(name: str) -> None:
+    """Rules write observation logs too, so a fourth comment is not evidence of a person."""
+    arguments = {"month": "2026-08"} if name == "monthly-report" else {}
+    text = _text(await mcp.get_prompt(name, arguments))
+
+    assert "Updated by product rule " in text
+    assert "Updated by general rule " in text
+    assert "invent no sixth" in text
+    assert "upper bound on human triage" in text
+    assert "Any other comment is a human assessment" not in text
+
+
+@pytest.mark.parametrize("name", CHANGE_FEED_PROMPTS)
+async def test_an_empty_feed_is_explained_to_the_reader(name: str) -> None:
+    """An unchanged finding re-imported writes no log, so silence is not evidence that nothing was scanned."""
+    arguments = {"month": "2026-08"} if name == "monthly-report" else {}
+    assert "not the same as nothing was scanned" in _text(await mcp.get_prompt(name, arguments))
+
+
+@pytest.mark.parametrize("name", STANDING_PROMPTS)
+async def test_the_standing_report_keeps_the_nullable_fix_available_caveat(name: str) -> None:
+    """It reports a fix_available share, so it has to carry the caveat that share depends on."""
+    text = _text(await mcp.get_prompt(name, {}))
+
+    assert "`fix_available` is nullable -- true, false, or not known" in text
+    assert 'never read a missing value as "no fix available"' in text
+
+
+@pytest.mark.parametrize("name", STANDING_PROMPTS)
+async def test_standing_numbers_carry_a_delta_and_the_estate_is_checked_for_silence(name: str) -> None:
+    """A standing number with no yesterday is unreadable, and a broken pipeline looks like a clean product."""
+    text = _text(await mcp.get_prompt(name, {}))
+
+    assert 'secobserve_product_metrics(kind="delta"' in text
+    assert 'secobserve_list("branches", ordering="last_import"' in text
+
+
+@pytest.mark.parametrize("name", REPORT_PROMPTS)
+async def test_reports_forbid_the_lines_that_leaked_into_the_last_one(name: str) -> None:
+    """Every item here was republished to a reader who owns the platform and did not need telling."""
+    arguments = {"month": "2026-08"} if name == "monthly-report" else {}
+    text = _text(await mcp.get_prompt(name, arguments))
+
+    assert "Never write in the report that SecObserve has no due date and no SLA" in text
+    assert "page counts" in text
+    assert "as reader-facing labels" in text
+    assert "anything about you: your memory, this session" in text
+
+
+@pytest.mark.parametrize("name", REPORT_PROMPTS)
+async def test_a_capped_list_has_to_say_what_it_left_out(name: str) -> None:
+    """Fifteen of 175 products silently held 45% of the estate's Critical."""
+    arguments = {"month": "2026-08"} if name == "monthly-report" else {}
+    text = _text(await mcp.get_prompt(name, arguments))
+
+    assert "at most three rows" in text
+    assert "how much the rows you left out hold" in text
 
 
 def _text(result: GetPromptResult | InputRequiredResult) -> str:
