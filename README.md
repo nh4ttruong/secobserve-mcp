@@ -35,7 +35,7 @@
 | `secobserve_assess_observation` | Triage one finding. Writes an observation log, honours the approval workflow. |
 | `secobserve_bulk_assess_observations` | The same assessment across up to 250 findings. |
 | `secobserve_approve_observation_log` | Approve or reject pending assessments (four-eyes). |
-| `secobserve_product_metrics` | Pre-aggregated counts: current, timeline, and how stale they are. |
+| `secobserve_product_metrics` | Pre-aggregated counts: current, timeline, the delta between two dates, and how stale they are. |
 | `secobserve_upload_file` | Import a scan report, SBOM or VEX document from disk. |
 | `secobserve_api_import` | Pull findings through a stored API configuration. |
 | `secobserve_trigger_scan` | Run SecObserve's built-in OSV or VulnerableCode scan. |

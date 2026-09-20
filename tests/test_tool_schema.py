@@ -19,6 +19,11 @@ async def test_unknown_tool_arguments_are_rejected() -> None:
         await mcp.call_tool("secobserve_list", {"resource": "products", "filter": {"id": 1}})
 
 
+async def test_the_surface_stays_at_eighteen_tools() -> None:
+    """Every schema is returned on every session, so a new kind belongs on an existing tool, not on a new one."""
+    assert len(await mcp.list_tools()) == 18
+
+
 async def test_every_tool_publishes_flat_arguments() -> None:
     for tool in await mcp.list_tools():
         assert tool.input_schema.get("additionalProperties") is False, tool.name
