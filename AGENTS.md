@@ -41,7 +41,7 @@ Do not expand into these without the user asking.
 - Container: `Dockerfile` (two stages, `python:3.13-slim`, non-root), published to `ghcr.io/nh4ttruong/secobserve-mcp` by the release workflow. Defaults to HTTP on 0.0.0.0:8931 and serves `GET /healthz` — liveness only, it never calls SecObserve.
 - CI: `.github/workflows/ci.yml` on every push to `main` and every pull request — ruff and mypy once, `pytest` on 3.11, 3.12, 3.13 and 3.14. `release.yml` re-runs the same checks on the tag, because the tagged commit is what ships.
 - Current version: `0.3.0`.
-- Baseline when this file was updated: 85 tests passing, ruff and mypy strict clean, stdio handshake and streamable HTTP both verified against a live instance.
+- Baseline when this file was updated: 91 tests passing, ruff and mypy strict clean, stdio handshake and streamable HTTP both verified against a live instance.
 
 ## Code structure
 
@@ -83,6 +83,21 @@ Layering rule: `tools_*` never calls `httpx` directly; every request goes throug
 - OpenAPI schema: `GET /api/oa3/schema/?format=json`; paths inside the schema carry the `/api` prefix.
 
 When the backend changes its contract, update `registry.py` and the matching tests in the same change.
+
+### Metrics
+
+Verified against SecObserve **1.59.2**.
+
+- `/metrics/product_metrics_current/` returns exactly fifteen integer counters: six by severity (`active_critical`, `active_high`, `active_medium`, `active_low`, `active_none`, `active_unknown`, counting only the active statuses `Open` / `Affected` / `In review`) and nine by status (`open`, `affected`, `resolved`, `duplicate`, `false_positive`, `in_review`, `not_affected`, `not_security`, `risk_accepted`).
+- When today's rows have not been written it answers **200 with all fifteen at `0`**; there is no error path, so a zero is indistinguishable from "not calculated". This is the most dangerous behaviour in the whole metrics surface — read `product_metrics_status` before quoting a count.
+- An unknown `product_id` is **ignored, not rejected**: `get_product_by_id` returns `None` on `DoesNotExist`, and `None` means the whole instance. `product_metrics_current?product_id=99999999` answers 200 with instance-wide numbers, byte-identical to the unscoped call -- confirmed against a live instance, not just read from the source. The same applies to the timeline and the metrics exports. Resolve the id before presenting any number as one product's.
+- Metrics rows are written for each product's **default branch only**, and never for a product group; a group id sums its products' rows. A metrics number is therefore smaller than the same count from `secobserve_list("observations")` for any product whose CI scans other branches.
+- `/metrics/product_metrics_timeline/` returns a JSON object keyed by ISO date. Its age buckets are `metrics/services/age.py`, **not** `commons/types.py` `Age_Choices` — the timeline has no `Today`, and an unrecognised age silently means the full retained history.
+- `/metrics/product_metrics_status/` returns `last_calculated` and `calculation_interval` in minutes.
+- No license counts in the current-metrics payload: they are a separate model, surfaced as the `*_licenses_count` fields on `/products/`.
+- The per-product `active_*_observation_count` fields on `/products/` are **also default-branch only**, and when the instance setting `observation_count_from_metrics` is on they are read from today's metrics rows, so they fall to zero exactly like metrics when the job has not run.
+- The backend has **no due date and no SLA**, anywhere. Nothing can compute "overdue" from it.
+- The `age` filter on `observations` filters `last_observation_log__gte`, i.e. *recently changed*, not *old*. It must never be used to compute how long a finding has been open.
 
 ## Tool surface invariants
 
