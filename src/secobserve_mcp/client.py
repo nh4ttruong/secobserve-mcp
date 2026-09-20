@@ -15,7 +15,7 @@ from typing import Any
 
 import httpx
 
-from .config import Config, ConfigError, get_config
+from .config import ConfigError, get_config, request_auth_header
 
 _client: httpx.AsyncClient | None = None
 
@@ -48,8 +48,8 @@ async def close_client() -> None:
         _client = None
 
 
-def _auth_headers(config: Config) -> dict[str, str]:
-    return {"Authorization": config.auth_header}
+def _auth_headers() -> dict[str, str]:
+    return {"Authorization": request_auth_header()}
 
 
 def _describe_validation_body(body: Any) -> str:
@@ -144,7 +144,7 @@ async def request(
     Raises:
         SecObserveError: on any non-2xx response, timeout or transport failure.
         ReadOnlyError: when a mutating verb is used in read-only mode.
-        ConfigError: when no credentials are configured.
+        ConfigError: when no credentials are configured, or the request carried one this server cannot read.
     """
     config = get_config()
     if method.upper() != "GET" and config.read_only:
@@ -164,7 +164,7 @@ async def request(
             json=json_body,
             files=files,
             data=data,
-            headers=_auth_headers(config),
+            headers=_auth_headers(),
         )
     except httpx.TimeoutException as exc:
         raise SecObserveError(
