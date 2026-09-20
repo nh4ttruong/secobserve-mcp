@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -323,6 +324,57 @@ async def test_several_approvals_use_the_bulk_endpoint() -> None:
     body = json.loads(route.calls.last.request.content)
     assert body["observation_logs"] == [991, 992]
     assert body["rejection_remark"] == "Evidence missing."
+
+
+CURRENT_METRICS = {"active_critical": 0, "active_high": 0, "open": 0, "risk_accepted": 0}
+
+
+def metrics_status_route(last_calculated: datetime) -> respx.Route:
+    return respx.get(f"{API}/metrics/product_metrics_status/").mock(
+        return_value=httpx.Response(
+            200, json={"last_calculated": last_calculated.isoformat(), "calculation_interval": 60}
+        )
+    )
+
+
+@respx.mock
+async def test_current_metrics_calculated_today_carry_no_stale_block() -> None:
+    respx.get(f"{API}/metrics/product_metrics_current/").mock(return_value=httpx.Response(200, json=CURRENT_METRICS))
+    status = metrics_status_route(datetime.now(UTC).astimezone())
+
+    payload = json.loads(await call("secobserve_product_metrics", kind="current"))
+
+    assert "stale" not in payload
+    assert status.call_count == 1
+
+
+@respx.mock
+async def test_current_metrics_are_flagged_when_the_job_has_not_run_today() -> None:
+    """The endpoint answers 200 with fifteen zeros when today's rows are missing, so only the status call catches it."""
+    respx.get(f"{API}/metrics/product_metrics_current/").mock(return_value=httpx.Response(200, json=CURRENT_METRICS))
+    yesterday = datetime.now(UTC).astimezone() - timedelta(days=1)
+    metrics_status_route(yesterday)
+
+    payload = json.loads(await call("secobserve_product_metrics", kind="current", product_id=12))
+
+    assert payload["stale"]["last_calculated"] == yesterday.isoformat()
+    assert "not a measurement" in payload["stale"]["warning"]
+    assert {k: v for k, v in payload.items() if k != "stale"} == CURRENT_METRICS
+
+
+@respx.mock
+async def test_timeline_and_status_ask_for_nothing_extra() -> None:
+    timeline = respx.get(f"{API}/metrics/product_metrics_timeline/").mock(
+        return_value=httpx.Response(200, json={"2026-09-19": CURRENT_METRICS})
+    )
+    status = metrics_status_route(datetime.now(UTC).astimezone() - timedelta(days=1))
+
+    await call("secobserve_product_metrics", kind="timeline", age="Past 7 days")
+    assert status.call_count == 0
+
+    await call("secobserve_product_metrics", kind="status")
+    assert status.call_count == 1
+    assert timeline.call_count == 1
 
 
 async def test_upload_refuses_a_path_outside_the_import_directory(tmp_path: Path) -> None:

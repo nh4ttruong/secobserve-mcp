@@ -10,6 +10,7 @@ that in the schema and the docstring turns a class of 400s into a schema error.
 from __future__ import annotations
 
 import json
+from datetime import UTC, date, datetime
 from typing import Annotated, Any, Literal
 
 from mcp.types import ToolAnnotations
@@ -375,6 +376,33 @@ async def secobserve_approve_observation_log(
     )
 
 
+def _metrics_staleness(status: Any) -> dict[str, Any] | None:
+    """None when the metrics job ran today, otherwise a block saying why the counts are not a measurement."""
+    last_calculated = status.get("last_calculated") if isinstance(status, dict) else None
+    if _local_date(last_calculated) == datetime.now(UTC).astimezone().date():
+        return None
+    return {
+        "last_calculated": last_calculated,
+        "warning": (
+            "The metrics job has not run today, so there are no rows for today and every count below is a zero "
+            "the backend filled in, not a measurement. Do not quote these numbers. "
+            "Run secobserve_run_periodic_task(task='calculate_product_metrics'), or count the rows themselves "
+            "with secobserve_list."
+        ),
+    }
+
+
+def _local_date(timestamp: Any) -> date | None:
+    """The local calendar date of an ISO timestamp, or None when it is absent or unreadable."""
+    if not isinstance(timestamp, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(timestamp)
+    except ValueError:
+        return None
+    return parsed.astimezone().date() if parsed.tzinfo else parsed.date()
+
+
 @mcp.tool(
     name="secobserve_product_metrics",
     title="Read SecObserve Metrics",
@@ -391,7 +419,7 @@ async def secobserve_product_metrics(
         Literal["current", "timeline", "status"],
         Field(
             description=(
-                "'current' = severity and license counts as of the last calculation; "
+                "'current' = observation counts by severity and status as of the last calculation; "
                 "'timeline' = one entry per day; 'status' = when metrics were last calculated "
                 "and how often, which tells you how stale 'current' is."
             )
@@ -413,12 +441,14 @@ async def secobserve_product_metrics(
     ] = None,
     response_format: Annotated[ResponseFormat, Field(description="Output format.")] = ResponseFormat.JSON,
 ) -> str:
-    """Read pre-aggregated observation and license counts for a product, a group, or the whole instance.
+    """Read pre-aggregated observation counts for a product, a group, or the whole instance.
 
     Far cheaper than counting rows with secobserve_list: these come from the
     metrics tables a background job maintains. That also means they are as old as
     the last calculation -- kind="status" tells you how old, and is worth reading
     before quoting a number as current.
+
+    License counts are not in here: use secobserve_list("products") for the per-product `*_licenses_count` fields, or the `license_overview` action on `license_components` for counts grouped by license.
 
     Args:
         kind (str): "current", "timeline" or "status".
@@ -429,11 +459,10 @@ async def secobserve_product_metrics(
         response_format (ResponseFormat): "json" (default) or "markdown".
 
     Returns:
-        str: For kind="current", a JSON object of counts keyed by severity
-             (open_critical, open_high, ...) and by license evaluation result.
-             For kind="timeline", a JSON object keyed by ISO date, each value the
-             counts for that day. For kind="status",
-             {"last_calculated": ISO timestamp, "calculation_interval": minutes}.
+        str: For kind="current", a JSON object of fifteen counts: six by severity (active_critical, active_high, active_medium, active_low, active_none, active_unknown) and nine by status (open, affected, resolved, duplicate, false_positive, in_review, not_affected, not_security, risk_accepted).
+             It carries an extra "stale" block when the job has not run today, because the endpoint then answers 200 with every count at zero instead of failing.
+             For kind="timeline", a JSON object keyed by ISO date, each value the counts for that day.
+             For kind="status", {"last_calculated": ISO timestamp, "calculation_interval": minutes}.
 
     Examples:
         - Use when: "how many critical findings are open in product 12?" ->
@@ -441,15 +470,20 @@ async def secobserve_product_metrics(
         - Use when: "is our backlog growing?" -> kind="timeline", age="Past 90 days"
         - Use when: a metric looks wrong -> kind="status", to check the job has run.
         - Don't use when: you need the findings themselves (use secobserve_list).
+        - Don't use when: you need license counts, see above.
 
     Error Handling:
         403 means no view permission on the product. An empty timeline usually
         means the metrics job has not run yet for that window -- check kind="status".
+        A "stale" block on kind="current" is not an error, but the zeros under it are not an answer: report the staleness instead of the counts.
     """
     if kind == "status":
         payload = await request("GET", "/metrics/product_metrics_status/")
     elif kind == "current":
         payload = await request("GET", "/metrics/product_metrics_current/", params={"product_id": product_id})
+        stale = _metrics_staleness(await request("GET", "/metrics/product_metrics_status/"))
+        if stale and isinstance(payload, dict):
+            payload["stale"] = stale
     else:
         payload = await request(
             "GET",
