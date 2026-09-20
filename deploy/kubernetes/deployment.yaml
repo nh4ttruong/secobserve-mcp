@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secobserve-mcp
+  labels:
+    app.kubernetes.io/name: secobserve-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: secobserve-mcp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: secobserve-mcp
+    spec:
+      containers:
+        - name: secobserve-mcp
+          # Pinned: `latest` moves the tool surface under an already-configured client.
+          image: ghcr.io/nh4ttruong/secobserve-mcp:0.4.0
+          # Replaces the image CMD rather than adding to it; a newer image may need one more flag to allow HTTP with a token from the environment, so check `--help`.
+          args: ["--transport", "http", "--host", "0.0.0.0", "--shared-identity"]
+          ports:
+            - name: http
+              containerPort: 8931
+          env:
+            - name: SECOBSERVE_BASE_URL
+              value: https://secobserve.example.com
+            - name: SECOBSERVE_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: secobserve-mcp-token
+                  key: token
+            # One token serves every caller of this port, so writes stay off until an operator decides otherwise.
+            - name: SECOBSERVE_READ_ONLY
+              value: "true"
+            - name: SECOBSERVE_ALLOW_DELETE
+              value: "false"
+            - name: SECOBSERVE_EXPORT_DIR
+              value: /tmp/secobserve-exports
+            # Uploads are confined to this directory; the default is the working directory, which is / in this image.
+            - name: SECOBSERVE_IMPORT_DIR
+              value: /tmp/secobserve-imports
+          # /healthz never calls SecObserve, so readiness only says the listener is up and a SecObserve outage never pulls this pod out of the Service.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          # runAsNonRoot is left unset deliberately: the image's USER is a name, which the kubelet cannot verify, and a UID here would only guess at what useradd picked.
+          securityContext:
+            # 999 is what `useradd --system` picked in the image; confirmed with `id` inside it.
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: scratch
+              mountPath: /tmp
+      volumes:
+        - name: scratch
+          emptyDir: {}

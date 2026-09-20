@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: secobserve-mcp
+  labels:
+    app.kubernetes.io/name: secobserve-mcp
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: secobserve-mcp
+  policyTypes: ["Ingress"]
+  ingress:
+    # Edit both selectors before applying: whatever reaches 8931 drives SecObserve with the configured token's permissions.
+    # Both selectors in one list element mean "that namespace AND those pods"; two elements would mean "or".
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: mcp-gateway
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mcp-gateway
+      ports:
+        - port: 8931
+          protocol: TCP
