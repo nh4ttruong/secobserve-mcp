@@ -17,6 +17,9 @@ RUN python -m pip install --no-cache-dir /wheels/* \
     && rm -rf /wheels
 
 USER secobserve
+# Both SECOBSERVE_IMPORT_DIR and SECOBSERVE_EXPORT_DIR default to the working directory, and at / that
+# makes exports unwritable and gives the upload confinement the whole filesystem as its root.
+WORKDIR /home/secobserve
 
 EXPOSE 8931
 
