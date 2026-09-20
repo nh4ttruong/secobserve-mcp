@@ -166,3 +166,16 @@ async def test_filters_pass_through_when_the_schema_is_unavailable() -> None:
     await secobserve_list(resource="observations", filters={"anything": 1})
 
     assert listing.called
+
+
+@respx.mock
+async def test_metrics_falls_back_to_the_static_catalogue() -> None:
+    """The metrics exports are separate schema paths, so /metrics/ itself is never in the schema."""
+    schema._schema = None
+    respx.get(f"{API}/oa3/schema/").mock(return_value=httpx.Response(200, json=SCHEMA))
+
+    result = await secobserve_describe_resource(resource="metrics")
+
+    assert "Static catalogue" in result
+    assert "none, actions only" in result
+    assert "export_codecharta" in result

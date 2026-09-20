@@ -4,6 +4,14 @@ Notable changes per release. Format follows [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+### Added
+
+- A `metrics` resource in the catalogue, so `secobserve_call_action` reaches `export_excel`, `export_csv` and `export_codecharta`. Their summaries carry the warning that the endpoint reads only `product_id` and ignores any other parameter name, which exports the whole instance instead of failing.
+
+### Fixed
+
+- A resource with no CRUD verbs no longer renders an empty `operations:` line in `secobserve_list_resources`, and `secobserve_list` on one says which tool does read it instead of listing an empty set of verbs.
+
 ## [0.2.2] — 2026-09-19
 
 ### Fixed
