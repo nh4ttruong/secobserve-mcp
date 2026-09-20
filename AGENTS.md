@@ -180,6 +180,8 @@ For changes touching the write paths (create, import, assessment, tasks), run `e
 
 ## Contributing
 
+This section is the binding version, and a new rule is recorded here. [CONTRIBUTING.md](CONTRIBUTING.md) states the same expectations for human contributors in their own terms; when the two differ, this one is right.
+
 ### Writing
 
 Applies to every file: Markdown, YAML, docstrings, commit messages, PR bodies.
