@@ -10,6 +10,7 @@ from secobserve_mcp.app import mcp
 
 EXPECTED = {"triage-product", "daily-changes", "weekly-changes", "daily-report", "weekly-report", "monthly-report"}
 METRICS_PROMPTS = ("daily-report", "weekly-report", "monthly-report")
+CHANGE_FEED_PROMPTS = ("daily-changes", "weekly-changes", "daily-report", "weekly-report", "monthly-report")
 
 
 async def test_every_prompt_is_registered() -> None:
@@ -64,6 +65,37 @@ async def test_change_feed_prompts_carry_the_importer_comments_verbatim() -> Non
         assert "Updated by parser" in text
         assert "Observation not found in latest scan" in text
         assert "no filter on `comment`" in text
+
+
+@pytest.mark.parametrize("name", CHANGE_FEED_PROMPTS)
+async def test_change_feed_counts_from_the_envelope_instead_of_draining_the_feed(name: str) -> None:
+    """A window of 948 logs read at the widest projection was half a megabyte of context; `total` costs one row."""
+    arguments = {"month": "2026-08"} if name == "monthly-report" else {}
+    text = _text(await mcp.get_prompt(name, arguments))
+
+    assert 'page_size=1, fields=["id"]' in text
+    assert "anything quoted as complete comes from `total`" in text
+    assert "floor" in text
+    assert 'fields=["comment"]' in text
+    assert "user_full_name" not in text
+
+
+@pytest.mark.parametrize("name", CHANGE_FEED_PROMPTS)
+async def test_change_feed_asks_for_titles_only_on_the_severity_filtered_pass(name: str) -> None:
+    """Title, component and branch are needed by the findings named individually, not by the rows that are counted."""
+    arguments = {"month": "2026-08"} if name == "monthly-report" else {}
+    text = _text(await mcp.get_prompt(name, arguments))
+
+    assert '{"severity": "Critical"}' in text
+    assert "observation_data.title" in text
+    assert "observation_data.origin_component_name_version" in text
+    assert "a list keeps the last value and silently drops the rest" in text
+
+
+async def test_only_a_multi_day_window_pays_for_the_created_timestamp() -> None:
+    """`Today` is already one day, so a 32-character timestamp per row buys nothing there."""
+    assert "created" not in _text(await mcp.get_prompt("daily-changes", {})).replace('ordering="-created"', "")
+    assert "first ten characters" in _text(await mcp.get_prompt("weekly-changes", {}))
 
 
 @pytest.mark.parametrize("name", METRICS_PROMPTS)
