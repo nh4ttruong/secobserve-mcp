@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -15,6 +18,9 @@ ENV_READ_ONLY = "SECOBSERVE_READ_ONLY"
 ENV_ALLOW_DELETE = "SECOBSERVE_ALLOW_DELETE"
 ENV_EXPORT_DIR = "SECOBSERVE_EXPORT_DIR"
 ENV_IMPORT_DIR = "SECOBSERVE_IMPORT_DIR"
+
+CREDENTIAL_HEADER = "X-SecObserve-Token"
+CREDENTIAL_SCHEMES = ("APIToken", "JWT")
 
 DEFAULT_BASE_URL = "http://localhost:8000"
 DEFAULT_TIMEOUT = 60.0
@@ -83,3 +89,37 @@ def get_config() -> Config:
         # arbitrary local files into SecObserve.
         import_dir=os.environ.get(ENV_IMPORT_DIR) or os.getcwd(),
     )
+
+
+# Config is cached for the process lifetime, so a credential that differs per caller cannot live on it.
+_request_credential: ContextVar[str | None] = ContextVar("secobserve_request_credential", default=None)
+
+
+@contextmanager
+def request_credential(value: str | None) -> Iterator[None]:
+    """Make `value` the credential inside this block; None leaves the environment's in force."""
+    token = _request_credential.set(value)
+    try:
+        yield
+    finally:
+        _request_credential.reset(token)
+
+
+def request_auth_header() -> str:
+    """The Authorization value for the call in flight: the credential the request carried, else the environment's.
+
+    Raises:
+        ConfigError: when the request carried a credential this server cannot read, or when neither source has one.
+    """
+    raw = _request_credential.get()
+    if raw is None:
+        return get_config().auth_header
+
+    scheme, _, token = raw.partition(" ")
+    if scheme not in CREDENTIAL_SCHEMES or not token.strip():
+        raise ConfigError(
+            f"{CREDENTIAL_HEADER} is malformed: send '<scheme> <token>', scheme {' or '.join(CREDENTIAL_SCHEMES)}. "
+            "The call was refused rather than fall back to the server's own credential, "
+            "which would attribute the action to the service account."
+        )
+    return raw

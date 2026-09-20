@@ -5,12 +5,16 @@ MCP Python SDK 2.x; the class was called FastMCP in 1.x.
 
 from __future__ import annotations
 
+from typing import Any
+
+from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from . import __version__
+from .config import CREDENTIAL_HEADER, request_credential
 
 INSTRUCTIONS = """Tools for SecObserve, a vulnerability and license management platform.
 
@@ -43,6 +47,26 @@ mcp = MCPServer(
     version=__version__,
     instructions=INSTRUCTIONS,
 )
+
+
+async def bind_request_credential(ctx: ServerRequestContext[Any, Any], call_next: CallNext) -> HandlerResult:
+    """Serve every message with the credential its own request carried, so SecObserve attributes the work to the caller.
+
+    One HTTP process serves many callers; without this they would all share the environment's token and the
+    observation log, four-eyes approval and per-product permissions would all speak for a single identity.
+
+    The header is routing, not proof of identity: it is worth trusting only because the deployment makes this
+    server reachable from the gateway that sets it and nowhere else. `ctx.request` is None on stdio, where
+    there are no headers and the environment credential stays in force.
+    """
+    request = ctx.request
+    credential: str | None = request.headers.get(CREDENTIAL_HEADER) if request is not None else None
+    with request_credential(credential):
+        return await call_next(ctx)
+
+
+# Each inbound message is dispatched in its own task, so this binding is that task's alone.
+mcp.middleware.append(bind_request_credential)
 
 
 @mcp.custom_route("/healthz", methods=["GET"])  # type: ignore[untyped-decorator]  # SDK decorator is untyped
