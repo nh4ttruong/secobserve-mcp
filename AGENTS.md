@@ -1,6 +1,6 @@
 # Agent base memory — `secobserve-mcp`
 
-Read this before changing code in this repository. It records the current state and the invariants that must hold. It is not a backlog or a design document.
+Read this before changing code in this repository. It records the invariants that must hold. It is not a backlog, a design document or a status report.
 
 ## Purpose of the repository
 
@@ -29,19 +29,16 @@ Out of scope today:
 
 Do not expand into these without the user asking.
 
-## Technical state
+## Technical constraints
 
-- Package: Python 3.11+ (uses `X | None`, `from __future__ import annotations` in every module).
+- Python 3.11+ (uses `X | None`, `from __future__ import annotations` in every module).
 - Entry point: `secobserve-mcp = secobserve_mcp.__main__:main`.
 - MCP: **SDK 2.x** (`mcp>=2.2,<3`). The class is `MCPServer` in `mcp.server.mcpserver`, **not** `FastMCP` — that name is the 1.x API and is gone.
-- HTTP: one `httpx.AsyncClient` shared for the process lifetime.
+- HTTP: one `httpx.AsyncClient` shared for the process lifetime, never one per request.
 - Validation: Pydantic v2 via `Annotated[..., Field(...)]` on each tool argument; the signature is the schema.
-- Tests: `pytest` + `pytest-asyncio` (`asyncio_mode = "auto"`) with `respx` mocking HTTP.
-- Lint/types: `ruff` (line-length 120) and `mypy --strict`.
-- Container: `Dockerfile` (two stages, `python:3.13-slim`, non-root), published to `ghcr.io/nh4ttruong/secobserve-mcp` by the release workflow. Defaults to HTTP on 0.0.0.0:8931 and serves `GET /healthz` — liveness only, it never calls SecObserve.
-- CI: `.github/workflows/ci.yml` on every push to `main` and every pull request — ruff and mypy once, `pytest` on 3.11, 3.12, 3.13 and 3.14. `release.yml` re-runs the same checks on the tag, because the tagged commit is what ships.
-- Current version: `0.3.0`.
-- Baseline when this file was updated: 91 tests passing, ruff and mypy strict clean, stdio handshake and streamable HTTP both verified against a live instance.
+- Tests: `pytest` + `pytest-asyncio` (`asyncio_mode = "auto"`) with `respx` mocking HTTP. Never call mutating endpoints on a real SecObserve instance from a test.
+- Lint/types: `ruff` (line-length 120) and `mypy --strict`, both clean before anything ships.
+- CI runs the same checks on every push and every pull request, and `release.yml` re-runs them on the tag, because the tagged commit is what ships.
 
 ## Code structure
 
@@ -55,17 +52,17 @@ src/secobserve_mcp/
 ├── formatting.py       # projection, markdown/json rendering, pagination envelope
 ├── exports.py          # writes export files, reads upload files (with confinement)
 ├── types.py            # enums mirrored from the backend (Severity, Status, VEX, ...)
-├── tools_crud.py       # 8 generic and discovery tools
-├── tools_workflows.py  # 10 validated workflow tools
-├── prompts.py          # 6 MCP Prompts: triage, the change feeds and the reports
+├── tools_crud.py       # the generic and discovery tools
+├── tools_workflows.py  # the validated workflow tools
+├── prompts.py          # MCP Prompts: triage, the change feeds and the reports
 └── __main__.py         # argparse, --check, transport selection
 
 scripts/release.py      # version bump, checks, commit and tag -- never pushes
 evals/seed.py           # seeds the dataset evaluation.xml asks about, via the server's own tools
-evaluation.xml          # 26 read-only questions with verified answers
+evaluation.xml          # read-only questions with verified answers
 ```
 
-Layering rule: `tools_*` never calls `httpx` directly; every request goes through `client.request`. `client` knows nothing about resources; all resource knowledge lives in `registry` or is read from `schema`.
+Layering rule: `tools_*` holds no HTTP and never calls `httpx` directly; every request goes through `client.request`. `client` holds no business logic and knows nothing about resources; all resource knowledge lives in `registry` or is read from `schema`.
 
 ## API contract in use
 
@@ -77,27 +74,21 @@ Layering rule: `tools_*` never calls `httpx` directly; every request goes throug
 - Assessment: `PATCH /observations/{id}/assessment/`, `comment` mandatory, refused while the previous assessment is still in `Needs approval`.
 - Bulk endpoints take at most 250 ids per call: `bulk_assessment`, `bulk_approval`, `bulk_delete`.
 - File import: multipart, a `file` part plus form fields; two variants, `_by_id` and `_by_name`.
-- OSV / VulnerableCode scans: POST with no body, and they **block until the scan finishes**, returning counters.
+- OSV / VulnerableCode scans: POST with no body, returning counters.
 - `periodic_tasks/run`: queues rather than running inline, returns 409 while the task is already running, requires superuser.
-- Deleting a product or product group requires a `name` query parameter matching the record's exact name.
 - OpenAPI schema: `GET /api/oa3/schema/?format=json`; paths inside the schema carry the `/api` prefix.
 
 When the backend changes its contract, update `registry.py` and the matching tests in the same change.
 
 ### Metrics
 
-Verified against SecObserve **1.59.2**.
+Verified against SecObserve 1.59.2.
 
-- `/metrics/product_metrics_current/` returns exactly fifteen integer counters: six by severity (`active_critical`, `active_high`, `active_medium`, `active_low`, `active_none`, `active_unknown`, counting only the active statuses `Open` / `Affected` / `In review`) and nine by status (`open`, `affected`, `resolved`, `duplicate`, `false_positive`, `in_review`, `not_affected`, `not_security`, `risk_accepted`).
-- When today's rows have not been written it answers **200 with all fifteen at `0`**; there is no error path, so a zero is indistinguishable from "not calculated". This is the most dangerous behaviour in the whole metrics surface — read `product_metrics_status` before quoting a count.
-- An unknown `product_id` is **ignored, not rejected**: `get_product_by_id` returns `None` on `DoesNotExist`, and `None` means the whole instance. `product_metrics_current?product_id=99999999` answers 200 with instance-wide numbers, byte-identical to the unscoped call -- confirmed against a live instance, not just read from the source. The same applies to the timeline and the metrics exports. Resolve the id before presenting any number as one product's.
-- Metrics rows are written for each product's **default branch only**, and never for a product group; a group id sums its products' rows. A metrics number is therefore smaller than the same count from `secobserve_list("observations")` for any product whose CI scans other branches.
-- `/metrics/product_metrics_timeline/` returns a JSON object keyed by ISO date. Its age buckets are `metrics/services/age.py`, **not** `commons/types.py` `Age_Choices` — the timeline has no `Today`, and an unrecognised age silently means the full retained history.
-- `/metrics/product_metrics_status/` returns `last_calculated` and `calculation_interval` in minutes.
-- No license counts in the current-metrics payload: they are a separate model, surfaced as the `*_licenses_count` fields on `/products/`.
-- The per-product `active_*_observation_count` fields on `/products/` are **also default-branch only**, and when the instance setting `observation_count_from_metrics` is on they are read from today's metrics rows, so they fall to zero exactly like metrics when the job has not run.
-- The backend has **no due date and no SLA**, anywhere. Nothing can compute "overdue" from it.
-- The `age` filter on `observations` filters `last_observation_log__gte`, i.e. *recently changed*, not *old*. It must never be used to compute how long a finding has been open.
+- `/metrics/product_metrics_current/` answers **200 with every counter at `0`** when today's rows have not been written; there is no error path, so a zero is indistinguishable from "not calculated". Read `product_metrics_status` before quoting a count. This is the most dangerous behaviour in the whole metrics surface.
+- An unknown `product_id` is **ignored, not rejected**: `get_product_by_id` returns `None` on `DoesNotExist`, and `None` means the whole instance, so a wrong id answers 200 with instance-wide numbers. The same applies to the timeline and the metrics exports. Resolve the id before presenting any number as one product's.
+- Metrics rows are written for each product's **default branch only**, and never for a product group; a group id sums its products' rows. The per-product `active_*_observation_count` fields on `/products/` are default-branch only too, and are read from today's metrics rows when the instance setting `observation_count_from_metrics` is on, so they fall to zero exactly like metrics.
+- The timeline's age buckets are `metrics/services/age.py`, **not** `commons/types.py` `Age_Choices`: it has no `Today`, and an unrecognised age silently means the full retained history.
+- The backend has **no due date and no SLA**, anywhere, so nothing can compute "overdue". The `age` filter on `observations` filters `last_observation_log__gte`, i.e. *recently changed* and not *old*, and must never be used to measure how long a finding has been open.
 
 ## Tool surface invariants
 
@@ -110,11 +101,11 @@ Verified against SecObserve **1.59.2**.
 - Cross-field rules live at the top of the tool body as `raise ValueError(...)`, which `@tool_errors` turns into text the agent can act on.
 - The docstring is the tool description the agent sees. It must carry: a one-line summary, Args with types and constraints, Returns with the schema of the JSON returned, Examples including "Don't use when", and Error Handling.
 - Every tool carries `@tool_errors` directly below `@mcp.tool(...)`.
-- Prompts do not count against the 18. A tool's schema is sent on every connection; a prompt's text is fetched by name when it is used, which is why the long-form caveats live in `prompts.py` and not in a tool description. A prompt is never a way to smuggle in a tool.
+- Prompts do not count against the 18, and a prompt is never a way to smuggle in a tool. A tool's schema is sent on every connection while a prompt's text is fetched by name, which is why the long-form caveats live in `prompts.py` and not in a tool description.
 
 ## Context invariants
 
-- SecObserve serializers return **every** column. An Observation has 99 fields plus nested `product_data` / `parser_data`; one raw page of 25 rows is tens of thousands of tokens.
+- SecObserve serializers return **every** column: an observation is around 100 fields plus nested `product_data` / `parser_data`, so one raw page of 25 rows is tens of thousands of tokens.
 - Every resource that returns many rows must have `list_fields` in `registry.py`. Having no default projection is a bug, not a choice.
 - `fields=["*"]` is the only way to opt out of projection, and a list result must say what it dropped.
 - Long string values are truncated in markdown with a note giving the real length and pointing at `secobserve_get`. Never truncate in the JSON format.
@@ -142,7 +133,7 @@ This is the most important invariant in the repository.
 ## Write and delete safety invariants
 
 - `secobserve_delete` is disabled unless `SECOBSERVE_ALLOW_DELETE` is set. Deletion in SecObserve cascades and cannot be undone.
-- Deleting `products` / `product_groups` additionally requires `confirm_name` to match the exact name; the API itself verifies this.
+- Deleting `products` / `product_groups` additionally requires `confirm_name` to match the record's exact name, passed to the API as a `name` query parameter; the API itself verifies it.
 - `SECOBSERVE_READ_ONLY` is enforced in `client.request`, before any request is made, so it does not depend on each tool remembering to check.
 - Uploads may only read files under `SECOBSERVE_IMPORT_DIR` (resolve, then compare `parents`). The reason is prompt injection: scan reports are third-party data, and without confinement an instruction planted in a report could talk an agent into uploading an unrelated local file to SecObserve.
 - Exports are written to `SECOBSERVE_EXPORT_DIR` under a basename sanitised to a single segment. A caller can never supply a path.
@@ -160,23 +151,18 @@ This is the most important invariant in the repository.
 
 ### While changing
 
-- Keep Python 3.11 compatibility and `mypy --strict` clean.
-- Never create a new `httpx.AsyncClient` per request.
-- No business logic in `client.py`, no HTTP in `tools_*`.
 - No new dependency for something a few lines of code can do.
-- Comments are sparse. Only what cannot be derived from the code, never a comment restating the line below, and a clear name or a short docstring in preference to either.
+- Comments are sparse: only what cannot be derived from the code, never a comment restating the line below, and a clear name or a short docstring in preference to either.
 - No comment points at another repository. Sibling repos change without notice and the comment goes stale in silence.
-- Never call mutating endpoints on a real SecObserve instance from tests.
 - A new tool ships with tests for its guards, not just the happy path.
 
 ### Required verification
 
 ```bash
-uv pip install -e ".[dev]"
-uv run pytest -q
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy src
+uv run pytest -q
 uv run secobserve-mcp --help
 ```
 
@@ -192,8 +178,7 @@ For changes touching the write paths (create, import, assessment, tasks), run `e
 
 ### When handing over
 
-- Name the main files changed.
-- State how many tests passed and which verification commands you ran.
+- Name the main files changed, and which verification commands you ran and passed.
 - State whether you called a real instance, and which one.
 - If you changed an answer in `evaluation.xml`, say how you re-verified it.
 
@@ -209,6 +194,7 @@ Applies to every file: Markdown, YAML, docstrings, commit messages, PR bodies.
 - Say it once. No paragraph restating a bullet, no sentence defending a decision nobody questioned.
 - Do not translate technical terms. `observation`, `assessment`, `projection`, `trusted publishing` stay as they are.
 - Shortest version that still carries the point. If it reads like it is explaining itself, cut it.
+- This file stays general. Edit it when a rule, an invariant or a capability changes, and for nothing else. Volatile state — test counts, version numbers, what passed when it was last written — belongs in the pull request, not here.
 
 ### Commits
 
@@ -226,7 +212,7 @@ Conventional Commits, one logical change per commit:
 
 The subject is imperative, lower case, no trailing period, at most 72 characters: `fix(schema): reject unknown filters before sending the request`.
 
-The body is **short**: the point, not an essay. Say **why** in a sentence or two — the diff already shows what. Name a SecObserve or MCP SDK behaviour when the change exists because of one, since that is the part nobody can rediscover from the code. No paragraph of reasoning, no walk through the alternatives you rejected, no restating the diff in prose. Two short paragraphs is a long body.
+The body is **short**: say **why** in a sentence or two, since the diff already shows what. Name a SecObserve or MCP SDK behaviour when the change exists because of one, since that is the part nobody can rediscover from the code. Two short paragraphs is a long body.
 
 A breaking change is `feat!:` or a `BREAKING CHANGE:` footer. Breaking here means a tool was renamed or removed, an input field changed shape, or an output schema changed — anything an already-configured client would notice.
 
@@ -234,7 +220,7 @@ Never add AI attribution or co-author trailers.
 
 ### Pull requests
 
-The PR describes the change, not the process of making it. **Short, logical, technical** — the main points only. No screenshots of passing tests, no narration of what you tried first, no justifying a decision at length. A reviewer opens the diff; the body tells them where to look and what to distrust.
+The PR describes the change, not the process of making it. **Short, logical, technical** — a reviewer opens the diff; the body tells them where to look and what to distrust.
 
 Four parts, in this order:
 
@@ -266,7 +252,7 @@ Rules that matter more than the template:
 - Length is a rule, not a preference. If a section needs more than a few bullets, the PR is doing too much.
 - `## Notes` is CRITICAL or absent. A follow-up you chose not to do, a rationale you are proud of, and a detail already visible in the diff are none of them critical.
 - One concern per PR. A refactor and a fix in the same PR means neither can be reverted alone.
-- State what you actually verified, and what you did not. "47 tests pass, no live instance touched" is worth more than a claim that everything works.
+- State what you actually verified, and what you did not.
 - If the change touches a documented invariant, say which one and why it still holds — or say plainly that it changes.
 
 ### Releases
@@ -277,7 +263,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Whil
 
 Breaking is judged against an already-configured client, not against the Python code: a tool or prompt renamed or removed, an argument renamed, an argument becoming required, a value dropped from an enum, an existing output field changing shape, or an environment variable renamed. Adding a tool, a prompt, an optional argument, an enum member or a new key to an output is not breaking.
 
-To release: `uv run python scripts/release.py <x.y.z>`. It refuses unless `main` is clean and matches `origin/main` and the tag does not already exist anywhere, runs the four checks first so a failure leaves the tree untouched, then bumps `pyproject.toml`, both version fields in `server.json` and `Current version` above, commits as `chore(release): v<x.y.z>` and tags.
+To release: `uv run python scripts/release.py <x.y.z>`. It refuses unless `main` is clean and matches `origin/main` and the tag does not already exist anywhere, runs the four checks first so a failure leaves the tree untouched, then bumps `pyproject.toml` and both version fields in `server.json`, commits as `chore(release): v<x.y.z>` and tags.
 
 It never pushes. `git push origin main && git push origin v<x.y.z>` stays manual, because that is the step that cannot be undone. The workflow then runs the checks again on the tag, publishes to PyPI via trusted publishing, registers with the MCP Registry via GitHub OIDC, builds the multi-arch image and creates the GitHub release.
 
@@ -291,7 +277,6 @@ A published version is permanent. PyPI does not allow re-uploading a version, so
 - `secobserve_trigger_scan` and `secobserve_api_import` block until the backend finishes. A timeout does not cancel the work in flight; check `vulnerability_checks` rather than retrying blind.
 - No automated integration test runs in CI: verification against a real backend is still manual, via `--check` and `evals/seed.py`.
 - Publishing is tokenless: PyPI trusted publishing plus GitHub OIDC for the registry. Both are configured on the provider side, not in this repo, so a fresh fork cannot release without setting them up.
-- Version lives in three places that must agree: `pyproject.toml`, `server.json`, and the git tag; the release workflow fails the build when they diverge. The Python module derives its own version from installed package metadata, so it is not a fourth place to edit.
 - The OpenAPI schema is cached in-process for `SCHEMA_TTL_SECONDS` (300). A backend upgraded mid-run is picked up within that window, not immediately; restart the server if you need it now. Callers past the TTL may refetch concurrently — the GET is idempotent, and a module-level `asyncio.Lock` would break across the event loops the tests create.
 
 Do not hide these limitations in tool descriptions or documentation when making related changes.
