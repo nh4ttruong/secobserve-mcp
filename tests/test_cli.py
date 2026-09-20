@@ -1,4 +1,4 @@
-"""Tests for the command line surface: --version, --print-config and the advisory version check in --check."""
+"""Tests for the command line surface: --version, --print-config, the advisory version check in --check, and the shared-identity guard on HTTP."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import respx
 from secobserve_mcp import __version__, config
 from secobserve_mcp.__main__ import (
     PYPI_JSON_URL,
+    SHARED_IDENTITY_FLAG,
     TOKEN_PLACEHOLDER,
     _check,
     _print_config,
@@ -150,7 +151,7 @@ def test_starting_the_server_never_calls_pypi(monkeypatch: pytest.MonkeyPatch) -
     pypi = respx.get(PYPI_JSON_URL).mock(return_value=httpx.Response(200, json={"info": {"version": "99.0.0"}}))
     monkeypatch.setattr(app.mcp, "run", lambda **kwargs: None)
 
-    for argv in (["secobserve-mcp"], ["secobserve-mcp", "--transport", "http"]):
+    for argv in (["secobserve-mcp"], ["secobserve-mcp", "--transport", "http", "--shared-identity"]):
         monkeypatch.setattr("sys.argv", argv)
         assert main() == 0
 
@@ -173,3 +174,100 @@ async def test_check_still_reports_secobserve_when_the_index_is_unreachable(
     assert "Connected to http://secobserve.test" in captured.out
     assert "  version: 1.59.2" in captured.out
     assert "could not be determined" in captured.err
+
+
+def _no_run_server(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+    """Record mcp.run kwargs instead of serving, so main() can be driven to the end."""
+    from secobserve_mcp import app
+
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(app.mcp, "run", lambda **kwargs: calls.append(kwargs))
+    return calls
+
+
+def test_http_refuses_a_credential_every_caller_would_share(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """HTTP has no authentication of its own, so one env token makes every caller one SecObserve identity."""
+    calls = _no_run_server(monkeypatch)
+    monkeypatch.setattr("sys.argv", ["secobserve-mcp", "--transport", "http", "--host", "0.0.0.0"])
+
+    assert main() == 2
+    assert calls == []
+
+    err = capsys.readouterr().err
+    assert "Refusing to start" in err
+    assert "0.0.0.0:8931" in err
+    # The refusal has to carry the whole command line: arguments to `docker run` replace CMD rather than extend it.
+    assert f"secobserve-mcp --transport http --host 0.0.0.0 --port 8931 {SHARED_IDENTITY_FLAG}" in err
+    assert "gateway" in err
+
+
+def test_the_guard_also_fires_on_loopback(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """The bind address changes who can reach the port, not that they all share one identity."""
+    _no_run_server(monkeypatch)
+    monkeypatch.setattr("sys.argv", ["secobserve-mcp", "--transport", "http"])
+
+    assert main() == 2
+    assert "127.0.0.1:8931" in capsys.readouterr().err
+
+
+def test_shared_identity_starts_http_and_forces_read_only(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """Writes under a shared token record the wrong actor in the observation log and in four-eyes approval."""
+    calls = _no_run_server(monkeypatch)
+    monkeypatch.setattr("sys.argv", ["secobserve-mcp", "--transport", "http", SHARED_IDENTITY_FLAG])
+
+    assert main() == 0
+    assert calls and calls[0]["transport"] == "streamable-http"
+    assert config.get_config().read_only is True
+    assert "refuses every write" in capsys.readouterr().err
+
+
+async def test_a_write_is_refused_after_shared_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The flag routes through SECOBSERVE_READ_ONLY, which client.request enforces before any request is made."""
+    from secobserve_mcp.client import ReadOnlyError, request
+
+    _no_run_server(monkeypatch)
+    monkeypatch.setattr("sys.argv", ["secobserve-mcp", "--transport", "http", SHARED_IDENTITY_FLAG])
+    assert main() == 0
+
+    with pytest.raises(ReadOnlyError):
+        await request("POST", "/products/")
+
+
+def test_stdio_is_untouched(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """One process, one user, their own token: the hazard does not exist and nothing may get harder."""
+    calls = _no_run_server(monkeypatch)
+    monkeypatch.setattr("sys.argv", ["secobserve-mcp"])
+
+    assert main() == 0
+    assert calls == [{}]
+    assert config.get_config().read_only is False
+    assert capsys.readouterr().err == ""
+
+
+@respx.mock
+def test_check_runs_before_the_guard(monkeypatch: pytest.MonkeyPatch, tmp_path, capsys) -> None:
+    """--check reports on the wiring; refusing it would hide the answer the operator came for."""
+    monkeypatch.setattr("sys.prefix", str(tmp_path))
+    _no_run_server(monkeypatch)
+    api = f"{config.get_config().base_url}/api"
+    respx.get(f"{api}/status/version/").mock(return_value=httpx.Response(200, json={"version": "1.59.2"}))
+    respx.get(f"{api}/users/me/").mock(return_value=httpx.Response(200, json={"username": "you"}))
+    respx.get(PYPI_JSON_URL).mock(return_value=httpx.Response(200, json={"info": {"version": __version__}}))
+    monkeypatch.setattr("sys.argv", ["secobserve-mcp", "--transport", "http", "--check"])
+
+    assert main() == 0
+    captured = capsys.readouterr()
+    assert "Connected to http://secobserve.test" in captured.out
+    assert "Refusing to start" not in captured.err
+
+
+def test_print_config_runs_before_the_guard(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """The snippet is how you find out how to supply credentials, and it still must not carry a real token."""
+    monkeypatch.setenv(config.ENV_API_TOKEN, "super-secret-token")
+    config.get_config.cache_clear()
+    monkeypatch.setattr("sys.argv", ["secobserve-mcp", "--transport", "http", "--print-config", "json"])
+
+    assert main() == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["mcpServers"]["secobserve"]["env"][config.ENV_API_TOKEN] == TOKEN_PLACEHOLDER
+    assert "super-secret-token" not in captured.out + captured.err
