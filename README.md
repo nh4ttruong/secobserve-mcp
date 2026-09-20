@@ -117,15 +117,19 @@ That last part is the only place this server calls pypi.org, it needs one short-
 docker run --rm -p 8931:8931 \
   -e SECOBSERVE_BASE_URL=https://secobserve.example.com \
   -e SECOBSERVE_API_TOKEN=... \
-  ghcr.io/nh4ttruong/secobserve-mcp
+  ghcr.io/nh4ttruong/secobserve-mcp \
+  --transport http --host 0.0.0.0 --shared-identity
 ```
 
-The image is built for `linux/amd64` and `linux/arm64`, defaults to `--transport http --host 0.0.0.0`, runs as a non-root user, and answers `GET /healthz` with its version.
+The image is built for `linux/amd64` and `linux/arm64`, runs as a non-root user, and answers `GET /healthz` with its version.
 `/healthz` is liveness only and never calls SecObserve, so a backend outage does not get this server restarted.
 
-One token is baked into the environment, so every caller of a container shares one SecObserve identity.
-Keep it behind a gateway that does the authenticating, and off any public port.
-For a single user, `uvx` over stdio is the better fit.
+`--shared-identity` is required and not in the image's default command: the token is baked into the environment, so every caller of the port acts as that one SecObserve identity, and the server refuses to start over HTTP until someone says that is intended.
+It then **refuses every write**, because an assessment made under a shared token records the wrong actor in the observation log and in four-eyes approval.
+Arguments to `docker run` replace `CMD` rather than extend it, which is why the transport flags are repeated above.
+
+Keep it behind a gateway that authenticates the caller, and off any public port.
+For a single user, `uvx` over stdio is the better fit: one process, one token, writes included.
 
 ## Register with a client
 
@@ -177,11 +181,13 @@ Most clients take the same JSON shape:
 }
 ```
 
-For a shared deployment, run streamable HTTP with stateless JSON:
+For a shared deployment, run streamable HTTP with stateless JSON behind a gateway that authenticates the caller:
 
 ```bash
-uvx secobserve-mcp --transport http --host 127.0.0.1 --port 8931
+uvx secobserve-mcp --transport http --host 127.0.0.1 --port 8931 --shared-identity
 ```
+
+`--shared-identity` is what makes this start: the transport has no authentication of its own, so every caller acts as the one identity in `SECOBSERVE_API_TOKEN`, and the flag accepts that and forces read-only for the process.
 
 ## Design
 
@@ -200,7 +206,7 @@ Expected failures come back as tool *text*, not as a raised exception: MCP repor
 - Credentials come from the environment and are never returned by a tool.
 - `secobserve_delete` is disabled by default; deleting a product or product group additionally requires `confirm_name` to match the record's exact name, which the API itself verifies. Deletion cascades and is irreversible.
 - Uploads are confined to `SECOBSERVE_IMPORT_DIR`; exports are written to `SECOBSERVE_EXPORT_DIR` under a sanitised single-segment filename.
-- HTTP transport binds to `127.0.0.1` by default.
+- HTTP transport binds to `127.0.0.1` by default, and refuses to start on a credential from the environment unless `--shared-identity` accepts that every caller shares it; it is then read-only.
 - **Observation titles, descriptions, component names and scanner output are third-party data**, supplied by scanners and by whoever wrote the scanned code. The server states this in its MCP instructions and in the relevant tool descriptions. Treat that content as data, never as instructions.
 
 > [!WARNING]

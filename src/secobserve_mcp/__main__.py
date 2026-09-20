@@ -2,7 +2,9 @@
 
 Defaults to stdio, which is what a local MCP client expects. Streamable HTTP is
 available for a shared deployment; it binds to 127.0.0.1 unless told otherwise,
-because an MCP server carries the caller's SecObserve credentials.
+because an MCP server carries the caller's SecObserve credentials. HTTP has no
+authentication of its own, so it refuses to start on a credential read from the
+environment unless --shared-identity accepts that every caller shares it.
 """
 
 from __future__ import annotations
@@ -10,6 +12,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -47,6 +50,8 @@ def _load_tools() -> None:
 
 
 TOKEN_PLACEHOLDER = "<your-api-token>"
+
+SHARED_IDENTITY_FLAG = "--shared-identity"
 
 CLIENTS = ("claude", "codex", "json", "vscode")
 
@@ -148,6 +153,29 @@ async def _check() -> int:
     return status
 
 
+def _shared_identity_refusal(host: str, port: int) -> str:
+    """Why an HTTP start on a process-wide credential is refused, and the exact command line that accepts it."""
+    return (
+        f"Refusing to start: --transport http serves {host}:{port} with no authentication of its own, and the "
+        f"credential in {ENV_API_TOKEN}/{ENV_JWT} makes every caller of that port act as one SecObserve identity "
+        "with all of that token's permissions.\n"
+        "\n"
+        "Better: an authenticating gateway in front, so each caller reaches SecObserve as themselves.\n"
+        "For one user: drop --transport http and run over stdio with that user's own token.\n"
+        f"To accept one shared identity: restart with the whole command line, which then refuses every write.\n"
+        "\n"
+        f"  secobserve-mcp --transport http --host {host} --port {port} {SHARED_IDENTITY_FLAG}\n"
+        "\n"
+        "A container needs the whole line too, because arguments to `docker run` replace CMD."
+    )
+
+
+def _force_read_only() -> None:
+    """Refuse writes for the rest of the process, through the switch client.request already enforces."""
+    os.environ[ENV_READ_ONLY] = "true"
+    get_config.cache_clear()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="secobserve-mcp",
@@ -158,6 +186,14 @@ def main() -> int:
     parser.add_argument("--transport", choices=["stdio", "http"], default="stdio", help="default: stdio")
     parser.add_argument("--host", default="127.0.0.1", help="bind address for --transport http")
     parser.add_argument("--port", type=int, default=8931, help="port for --transport http")
+    parser.add_argument(
+        SHARED_IDENTITY_FLAG,
+        action="store_true",
+        help=(
+            f"accept that every caller of --transport http acts as the one identity in {ENV_API_TOKEN}/{ENV_JWT} "
+            "on a port this server does not authenticate; forces read-only for the process"
+        ),
+    )
     parser.add_argument(
         "--check",
         action="store_true",
@@ -191,6 +227,16 @@ def main() -> int:
         return asyncio.run(_check())
 
     if args.transport == "http":
+        if config.api_token or config.jwt:
+            if not args.shared_identity:
+                print(_shared_identity_refusal(args.host, args.port), file=sys.stderr)
+                return 2
+            _force_read_only()
+            print(
+                f"{SHARED_IDENTITY_FLAG}: every caller of {args.host}:{args.port} acts as the identity in "
+                f"{ENV_API_TOKEN}/{ENV_JWT}; this process refuses every write.",
+                file=sys.stderr,
+            )
         mcp.run(
             transport="streamable-http",
             host=args.host,
