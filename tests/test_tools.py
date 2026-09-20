@@ -21,6 +21,7 @@ from secobserve_mcp.tools_crud import (
     secobserve_list_resources,
 )
 from secobserve_mcp.tools_workflows import (
+    _elapsed_since,
     secobserve_upload_file,
 )
 
@@ -329,16 +330,30 @@ async def test_several_approvals_use_the_bulk_endpoint() -> None:
 CURRENT_METRICS = {"active_critical": 0, "active_high": 0, "open": 0, "risk_accepted": 0}
 
 
-def metrics_status_route(last_calculated: datetime) -> respx.Route:
+def metrics_status_route(last_calculated: datetime | None, interval: object = 60) -> respx.Route:
     return respx.get(f"{API}/metrics/product_metrics_status/").mock(
         return_value=httpx.Response(
-            200, json={"last_calculated": last_calculated.isoformat(), "calculation_interval": 60}
+            200,
+            json={
+                "last_calculated": last_calculated.isoformat() if last_calculated else None,
+                "calculation_interval": interval,
+            },
         )
     )
 
 
+def product_lookup_routes(product_id: int, *, is_group: bool = False) -> tuple[respx.Route, respx.Route]:
+    """product_names holds products only, so a product group answers 404 there and 200 on product_group_names."""
+    missing = httpx.Response(404, json={"detail": "Not found."})
+    found = httpx.Response(200, json={"id": product_id, "name": "Portal"})
+    return (
+        respx.get(f"{API}/product_names/{product_id}/").mock(return_value=missing if is_group else found),
+        respx.get(f"{API}/product_group_names/{product_id}/").mock(return_value=found if is_group else missing),
+    )
+
+
 @respx.mock
-async def test_current_metrics_calculated_today_carry_no_stale_block() -> None:
+async def test_current_metrics_calculated_recently_carry_no_stale_block() -> None:
     respx.get(f"{API}/metrics/product_metrics_current/").mock(return_value=httpx.Response(200, json=CURRENT_METRICS))
     status = metrics_status_route(datetime.now(UTC).astimezone())
 
@@ -349,17 +364,95 @@ async def test_current_metrics_calculated_today_carry_no_stale_block() -> None:
 
 
 @respx.mock
-async def test_current_metrics_are_flagged_when_the_job_has_not_run_today() -> None:
-    """The endpoint answers 200 with fifteen zeros when today's rows are missing, so only the status call catches it."""
+async def test_current_metrics_are_flagged_when_the_job_stopped_hours_ago() -> None:
+    """The endpoint answers 200 with fifteen zeros when the backend's day has no rows, so only the status call catches it."""
     respx.get(f"{API}/metrics/product_metrics_current/").mock(return_value=httpx.Response(200, json=CURRENT_METRICS))
-    yesterday = datetime.now(UTC).astimezone() - timedelta(days=1)
-    metrics_status_route(yesterday)
+    product, group = product_lookup_routes(12)
+    stopped = datetime.now(UTC).astimezone() - timedelta(hours=19)
+    metrics_status_route(stopped)
 
     payload = json.loads(await call("secobserve_product_metrics", kind="current", product_id=12))
 
-    assert payload["stale"]["last_calculated"] == yesterday.isoformat()
+    assert payload["stale"]["last_calculated"] == stopped.isoformat()
+    assert "19h 0m ago" in payload["stale"]["warning"]
     assert "not a measurement" in payload["stale"]["warning"]
     assert {k: v for k, v in payload.items() if k != "stale"} == CURRENT_METRICS
+    assert (product.call_count, group.call_count) == (1, 0)
+
+
+@pytest.mark.parametrize(
+    ("minutes_ago", "interval", "stale"),
+    [
+        (10, 5, False),  # inside the floor that absorbs a run outlasting its own interval
+        (45, 5, True),
+        (120, 60, False),  # two of three hourly intervals
+        (200, 60, True),
+        (45, 0, True),  # unusable interval falls back to the backend's default of 5
+        (45, None, True),
+        (240, 100000, True),  # capped at an hour, so a broken schedule cannot widen the guard to days
+        (19 * 60, 5, True),  # the window the old calendar-date guard missed while the host ran ahead of the backend
+    ],
+)
+@respx.mock
+async def test_staleness_is_measured_in_elapsed_time_not_calendar_days(
+    minutes_ago: int, interval: object, stale: bool
+) -> None:
+    respx.get(f"{API}/metrics/product_metrics_current/").mock(return_value=httpx.Response(200, json=CURRENT_METRICS))
+    metrics_status_route(datetime.now(UTC).astimezone() - timedelta(minutes=minutes_ago), interval)
+
+    payload = json.loads(await call("secobserve_product_metrics", kind="current"))
+
+    assert ("stale" in payload) is stale
+
+
+@respx.mock
+async def test_a_last_calculation_that_cannot_be_read_is_stale() -> None:
+    respx.get(f"{API}/metrics/product_metrics_current/").mock(return_value=httpx.Response(200, json=CURRENT_METRICS))
+    metrics_status_route(None)
+
+    assert "never" in json.loads(await call("secobserve_product_metrics", kind="current"))["stale"]["warning"]
+
+    respx.get(f"{API}/metrics/product_metrics_status/").mock(
+        return_value=httpx.Response(200, json={"last_calculated": "yesterday", "calculation_interval": 5})
+    )
+
+    payload = json.loads(await call("secobserve_product_metrics", kind="current"))
+    assert "could not parse" in payload["stale"]["warning"]
+
+
+def test_a_timestamp_with_a_trailing_z_and_microseconds_is_readable() -> None:
+    assert _elapsed_since("2026-09-20T16:20:17.881966Z") is not None
+
+
+@respx.mock
+async def test_an_unknown_product_id_is_refused_instead_of_answering_for_the_instance() -> None:
+    """The metrics endpoints read an unknown id as "no product" and return the whole estate's numbers with HTTP 200."""
+    respx.get(f"{API}/product_names/99999999/").mock(return_value=httpx.Response(404, json={"detail": "Not found."}))
+    respx.get(f"{API}/product_group_names/99999999/").mock(
+        return_value=httpx.Response(404, json={"detail": "Not found."})
+    )
+    current = respx.get(f"{API}/metrics/product_metrics_current/").mock(
+        return_value=httpx.Response(200, json=CURRENT_METRICS)
+    )
+
+    result = await call("secobserve_product_metrics", kind="current", product_id=99999999)
+
+    assert "is not a product or a product group" in result
+    assert "secobserve_list(resource='product_names'" in result
+    assert current.call_count == 0
+
+
+@respx.mock
+async def test_a_product_group_id_is_accepted_through_the_second_lookup() -> None:
+    product, group = product_lookup_routes(7, is_group=True)
+    timeline = respx.get(f"{API}/metrics/product_metrics_timeline/").mock(
+        return_value=httpx.Response(200, json={"2026-09-19": CURRENT_METRICS})
+    )
+
+    await call("secobserve_product_metrics", kind="timeline", product_id=7)
+
+    assert (product.call_count, group.call_count) == (1, 1)
+    assert timeline.calls.last.request.url.params["product_id"] == "7"
 
 
 @respx.mock

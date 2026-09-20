@@ -10,7 +10,7 @@ that in the schema and the docstring turns a class of 400s into a schema error.
 from __future__ import annotations
 
 import json
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any, Literal
 
 from mcp.types import ToolAnnotations
@@ -376,31 +376,93 @@ async def secobserve_approve_observation_log(
     )
 
 
+async def _require_product(product_id: int) -> None:
+    """Raise unless product_id is a product or a product group the token can read.
+
+    The metrics endpoints resolve an unknown id to "no product" and then answer for the whole instance with HTTP 200,
+    so a typo comes back as the entire estate's numbers presented as one product's. /product_names/ holds products
+    only, which is why a product group needs the second lookup rather than a single one.
+    """
+    try:
+        await request("GET", f"/product_names/{product_id}/")
+    except SecObserveError as exc:
+        try:
+            await request("GET", f"/product_group_names/{product_id}/")
+        except SecObserveError:
+            raise ValueError(
+                f"product_id={product_id} is not a product or a product group this token can read, and the metrics "
+                "endpoints would have answered for the whole instance instead of failing. Resolve the id with "
+                "secobserve_list(resource='product_names', search='<name>'), or omit product_id for the instance. "
+                f"The lookup failed with: {exc}"
+            ) from exc
+
+
+# Three runs tolerate two missed ones. Never less than half an hour, because last_calculated is written when a run
+# finishes and a run on a large instance can outlast its own interval, which would flag a job that is only slow.
+_STALE_AFTER_RUNS = 3
+_STALE_MINIMUM = timedelta(minutes=30)
+
+
 def _metrics_staleness(status: Any) -> dict[str, Any] | None:
-    """None when the metrics job ran today, otherwise a block saying why the counts are not a measurement."""
+    """None when the metrics job ran recently, otherwise a block saying why the counts are not a measurement.
+
+    Elapsed time, not calendar dates: the backend decides which day the counts come from in its own TIME_ZONE, so a
+    host in another zone would keep reporting the numbers as current for as many hours as it runs ahead.
+    """
     last_calculated = status.get("last_calculated") if isinstance(status, dict) else None
-    if _local_date(last_calculated) == datetime.now(UTC).astimezone().date():
+    interval = _calculation_interval(status)
+    elapsed = _elapsed_since(last_calculated)
+    if elapsed is not None and elapsed <= max(_STALE_AFTER_RUNS * interval, _STALE_MINIMUM):
         return None
+    if elapsed is not None:
+        when = f"{_format_elapsed(elapsed)} ago"
+    elif last_calculated is None:
+        when = "never"
+    else:
+        when = "at a timestamp this server could not parse"
     return {
         "last_calculated": last_calculated,
         "warning": (
-            "The metrics job has not run today, so there are no rows for today and every count below is a zero "
-            "the backend filled in, not a measurement. Do not quote these numbers. "
-            "Run secobserve_run_periodic_task(task='calculate_product_metrics'), or count the rows themselves "
-            "with secobserve_list."
+            f"The metrics job last ran {when}, and the backend expects it every "
+            f"{int(interval.total_seconds() // 60)} minutes. Once its own day rolls over without a run there are no "
+            "rows for that day and every count below is a zero the backend filled in, not a measurement. "
+            "Do not quote these numbers. Run secobserve_run_periodic_task(task='calculate_product_metrics'), "
+            "or count the rows themselves with secobserve_list."
         ),
     }
 
 
-def _local_date(timestamp: Any) -> date | None:
-    """The local calendar date of an ISO timestamp, or None when it is absent or unreadable."""
+def _calculation_interval(status: Any) -> timedelta:
+    """How often the metrics job is meant to run, with anything unusable read as the backend's own default.
+
+    Capped at an hour: the backend schedules the job on a minute crontab, so a larger number is a broken schedule
+    rather than a longer wait, and taking it at face value would widen the guard to days.
+    """
+    raw = status.get("calculation_interval") if isinstance(status, dict) else None
+    minutes = raw if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0 else 5
+    return timedelta(minutes=min(minutes, 60))
+
+
+def _elapsed_since(timestamp: Any) -> timedelta | None:
+    """How long ago an ISO timestamp was, or None when it is absent or unreadable."""
     if not isinstance(timestamp, str):
         return None
     try:
         parsed = datetime.fromisoformat(timestamp)
     except ValueError:
         return None
-    return parsed.astimezone().date() if parsed.tzinfo else parsed.date()
+    return datetime.now(UTC) - (parsed if parsed.tzinfo else parsed.astimezone())
+
+
+def _format_elapsed(elapsed: timedelta) -> str:
+    """Coarse elapsed time: the agent needs the order of magnitude, not the seconds."""
+    hours, minutes = divmod(int(elapsed.total_seconds()) // 60, 60)
+    days, hours = divmod(hours, 24)
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
 
 
 _AGE_DAYS: dict[MetricsAge, int] = {
@@ -477,7 +539,7 @@ async def secobserve_product_metrics(
         Field(
             description=(
                 "Restrict to one product, or to every product in a product group when the id is a group. "
-                "Omit for the whole instance."
+                "An id that matches neither is refused. Omit for the whole instance."
             ),
             ge=1,
         ),
@@ -519,7 +581,9 @@ async def secobserve_product_metrics(
     Args:
         kind (str): "current", "timeline", "delta" or "status".
         product_id (Optional[int]): One product, or every product in a group
-          when the id is a product group. Omit for the instance.
+          when the id is a product group. Resolved before the metrics are read,
+          because the endpoints answer for the whole instance when the id
+          matches nothing. Omit for the instance.
         age (Optional[MetricsAge]): Window for "timeline": "Past 7 days",
           "Past 30 days", "Past 90 days", "Past 365 days".
         since (Optional[str]): Start of the range for "delta", YYYY-MM-DD.
@@ -528,7 +592,7 @@ async def secobserve_product_metrics(
 
     Returns:
         str: For kind="current", a JSON object of fifteen counts: six by severity (active_critical, active_high, active_medium, active_low, active_none, active_unknown) and nine by status (open, affected, resolved, duplicate, false_positive, in_review, not_affected, not_security, risk_accepted).
-             It carries an extra "stale" block when the job has not run today, because the endpoint then answers 200 with every count at zero instead of failing.
+             It carries an extra "stale" block when the metrics job has not run for several of its own calculation intervals, because the endpoint then answers 200 with every count at zero instead of failing. The warning says how long ago it last ran.
              For kind="timeline", a JSON object keyed by ISO date, each value the counts for that day.
              For kind="delta", {"since": {"requested", "used"}, "until": {"requested", "used"}, "start": counts, "end": counts, "delta": signed change per counter, "missing_days": days in the range the job never wrote}.
              Quote "used" rather than "requested" whenever they differ, since the counts come from the dates that exist.
@@ -544,8 +608,8 @@ async def secobserve_product_metrics(
         - Don't use when: you need license counts, see above.
 
     Error Handling:
-        403 means no view permission on the product. An empty timeline usually
-        means the metrics job has not run yet for that window -- check kind="status".
+        403 means no view permission on the product, and an unknown product_id is refused rather than silently widened to the whole instance.
+        An empty timeline usually means the metrics job has not run yet for that window -- check kind="status".
         A "stale" block on kind="current" is not an error, but the zeros under it are not an answer: report the staleness instead of the counts.
         kind="delta" refuses a since after until, a since older than everything the instance retains (the error names the earliest date it has), and since or until on another kind.
     """
@@ -554,6 +618,9 @@ async def secobserve_product_metrics(
             f"since and until belong to kind='delta', not kind='{kind}'. "
             "Use kind='delta' to compare two dates, or kind='timeline' with age for a whole window."
         )
+
+    if product_id is not None:
+        await _require_product(product_id)
 
     if kind == "delta":
         if since is None:
