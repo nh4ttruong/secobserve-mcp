@@ -4,6 +4,8 @@ Notable changes per release. Format follows [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-09-20
+
 ### Added
 
 - A `metrics` resource in the catalogue, so `secobserve_call_action` reaches `export_excel`, `export_csv` and `export_codecharta`. Their summaries carry the warning that the endpoint reads only `product_id` and ignores any other parameter name, which exports the whole instance instead of failing.
@@ -81,7 +83,8 @@ If you ever ran `uv tool install secobserve-mcp`, that pinned a version and `uvx
 
 First release. 18 tools over the SecObserve REST API: generic CRUD and discovery across ~50 resources, an escape hatch for the ~40 named actions, and validated workflows for assessment, four-eyes approval, metrics, import, scans, periodic tasks, status and VEX generation.
 
-[Unreleased]: https://github.com/nh4ttruong/secobserve-mcp/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/nh4ttruong/secobserve-mcp/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/nh4ttruong/secobserve-mcp/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/nh4ttruong/secobserve-mcp/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/nh4ttruong/secobserve-mcp/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/nh4ttruong/secobserve-mcp/compare/v0.1.3...v0.2.0
