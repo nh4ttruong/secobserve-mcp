@@ -37,8 +37,8 @@
 | `secobserve_approve_observation_log` | Approve or reject pending assessments (four-eyes). |
 | `secobserve_product_metrics` | Pre-aggregated counts: current, timeline, the delta between two dates, and how stale they are. |
 | `secobserve_upload_file` | Import a scan report, SBOM or VEX document from disk. |
-| `secobserve_api_import` | Pull findings through a stored API configuration. |
-| `secobserve_trigger_scan` | Run SecObserve's built-in OSV or VulnerableCode scan. |
+| `secobserve_api_import` | Pull findings through a stored API configuration. Blocks; a timeout reports the work as still running and where to watch it land. |
+| `secobserve_trigger_scan` | Run SecObserve's built-in OSV or VulnerableCode scan. Same blocking behaviour. |
 | `secobserve_run_periodic_task` | Trigger a background job, or list the registered ones. |
 | `secobserve_status` | Version, health, public settings, queue statistics, PURL types. |
 | `secobserve_vex_document` | Generate or revise a CSAF / OpenVEX / CycloneDX document. |
@@ -87,7 +87,7 @@ uv venv && uv pip install -e ".[dev]"
 | `SECOBSERVE_BASE_URL` | `http://localhost:8000` | Base URL **without** `/api`. |
 | `SECOBSERVE_API_TOKEN` | — | User or product API token. Recommended. |
 | `SECOBSERVE_JWT` | — | Alternative to an API token. |
-| `SECOBSERVE_TIMEOUT` | `60` | Seconds. Raise it for imports and scans, which block. |
+| `SECOBSERVE_TIMEOUT` | `60` | Seconds. SecObserve imports and scans inside the request, and a timeout does not cancel one; raise it to get the counts back from the call itself. |
 | `SECOBSERVE_VERIFY_SSL` | `true` | Set false only for a self-signed dev certificate. |
 | `SECOBSERVE_READ_ONLY` | `false` | `true` refuses every non-GET call. |
 | `SECOBSERVE_ALLOW_DELETE` | `false` | `secobserve_delete` is off until this is set. |
