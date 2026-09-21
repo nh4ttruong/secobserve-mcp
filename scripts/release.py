@@ -10,6 +10,7 @@ never be replaced, so the irreversible step stays in your hands.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -57,12 +58,28 @@ def bump_pyproject(text: str, new: str) -> str:
 
 
 def bump_server_json(text: str, old: str, new: str) -> str:
-    """server.json carries the version once for the server and once per package, and every one of them ships."""
+    """server.json carries the version for the server, for every package, and again inside each OCI image tag.
+
+    The registry refuses an OCI package that also carries `registryBaseUrl`, so its registry host and its tag
+    both live in `identifier`. A release that bumped only the `version` fields would publish a manifest whose
+    image reference still points at the previous release, and nothing downstream would report that.
+    """
     field = f'"version": "{old}"'
     count = text.count(field)
     if count < 2:
         raise Abort(f"expected the server's version and at least one package's in server.json, found {count}")
-    return text.replace(field, f'"version": "{new}"')
+    text = text.replace(field, f'"version": "{new}"')
+
+    for package in json.loads(text).get("packages", []):
+        if package.get("registryType") != "oci":
+            continue
+        if package.get("registryBaseUrl"):
+            raise Abort("an OCI package must not carry registryBaseUrl; the registry rejects the whole publish")
+        identifier = str(package["identifier"])
+        if not identifier.endswith(f":{old}"):
+            raise Abort(f"OCI identifier {identifier} does not end in the version being released, :{old}")
+        text = text.replace(f'"{identifier}"', f'"{identifier[: -len(old)]}{new}"')
+    return text
 
 
 def check_repo_state(new: str) -> None:
