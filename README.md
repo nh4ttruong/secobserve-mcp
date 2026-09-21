@@ -10,10 +10,11 @@
 *MCP server for SecObserve — triage, import and administration from an agent*
 
 [![PyPI](https://img.shields.io/pypi/v/secobserve-mcp?style=flat-square&color=blue)](https://pypi.org/project/secobserve-mcp/)
-[![Python](https://img.shields.io/pypi/pyversions/secobserve-mcp?style=flat-square&logo=python&logoColor=white)](https://pypi.org/project/secobserve-mcp/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue?style=flat-square&logo=python&logoColor=white)](https://pypi.org/project/secobserve-mcp/)
 [![Release](https://img.shields.io/github/actions/workflow/status/nh4ttruong/secobserve-mcp/release.yml?style=flat-square&label=release)](https://github.com/nh4ttruong/secobserve-mcp/actions/workflows/release.yml)
 [![SecObserve](https://img.shields.io/badge/SecObserve-1.59.0-0b7285?style=flat-square)](https://github.com/MaibornWolff/SecObserve)
 [![License](https://img.shields.io/github/license/nh4ttruong/secobserve-mcp?style=flat-square&color=green)](LICENSE)
+[![Install in VS Code](https://img.shields.io/badge/VS_Code-install-0098FF?style=flat-square&logo=visualstudiocode&logoColor=white)](vscode:mcp/install?name=secobserve&config=%7B%22type%22%3A%22stdio%22%2C%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22secobserve-mcp%40latest%22%5D%7D)
 
 [Tools](#tools) • [Install](#install) • [Configure](#configure) • [Register with a client](#register-with-a-client) • [Design](#design)
 
