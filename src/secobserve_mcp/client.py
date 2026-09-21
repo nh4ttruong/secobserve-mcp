@@ -28,6 +28,10 @@ class ReadOnlyError(SecObserveError):
     """A mutating call was attempted while the server is in read-only mode."""
 
 
+class RequestTimeoutError(SecObserveError):
+    """The call ran out of time. The work may still be running: SecObserve does the slow ones inside the request."""
+
+
 def get_client() -> httpx.AsyncClient:
     global _client
     if _client is None:
@@ -168,7 +172,7 @@ async def request(
             headers=_auth_headers(),
         )
     except httpx.TimeoutException as exc:
-        raise SecObserveError(
+        raise RequestTimeoutError(
             f"{method} {path} timed out after {config.timeout}s. "
             "Narrow the filters or raise SECOBSERVE_TIMEOUT; metrics and import calls are the slow ones."
         ) from exc

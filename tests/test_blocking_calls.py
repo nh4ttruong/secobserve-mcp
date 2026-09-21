@@ -11,6 +11,7 @@ import httpx
 import respx
 
 from secobserve_mcp.app import mcp
+from secobserve_mcp.client import RequestTimeoutError, SecObserveError
 from secobserve_mcp.tools_workflows import secobserve_trigger_scan  # noqa: F401  registers the tools
 
 from .conftest import BASE_URL
@@ -175,3 +176,28 @@ async def test_api_import_returns_counts_when_it_finishes() -> None:
 
     assert "observations new: 3" in result
     assert "Still running" not in result
+
+
+@respx.mock
+async def test_a_timeout_is_recognised_by_type_and_not_by_its_wording() -> None:
+    """Keying on the message meant rewording client.py would silently drop the whole Still running path."""
+    respx.get(f"{API}/vulnerability_checks/").mock(return_value=httpx.Response(200, json={"results": []}))
+    respx.post(f"{API}/products/12/scan_osv/").mock(side_effect=httpx.ReadTimeout("whatever the wording is"))
+
+    result = await mcp.call_tool("secobserve_trigger_scan", {"scanner": "osv", "product_id": 12})
+
+    assert issubclass(RequestTimeoutError, SecObserveError)
+    assert result.content[0].text.startswith("Still running, no counts available:")
+
+
+@respx.mock
+async def test_a_rejection_still_raises_rather_than_being_read_as_still_running() -> None:
+    respx.get(f"{API}/vulnerability_checks/").mock(return_value=httpx.Response(200, json={"results": []}))
+    respx.post(f"{API}/products/12/scan_osv/").mock(
+        return_value=httpx.Response(400, json={"message": "OSV scan is not enabled for product 12"})
+    )
+
+    result = await mcp.call_tool("secobserve_trigger_scan", {"scanner": "osv", "product_id": 12})
+
+    assert "Still running" not in result.content[0].text
+    assert "not enabled" in result.content[0].text
