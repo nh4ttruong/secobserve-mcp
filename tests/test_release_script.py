@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -39,37 +40,84 @@ def test_only_x_y_z_is_accepted(version: str) -> None:
         release.parse(version)
 
 
+OCI_SERVER = (
+    '{"version": "0.8.0", "packages": ['
+    '{"registryType": "pypi", "identifier": "secobserve-mcp", "version": "0.8.0"}, '
+    '{"registryType": "oci", "identifier": "ghcr.io/o/p:0.8.0"}]}'
+)
+
+
 def test_the_oci_image_tag_moves_with_the_version() -> None:
-    """The registry refuses `registryBaseUrl` on an OCI package, so the tag rides in `identifier` and must move."""
-    server = (
-        '{"version": "0.8.0", "packages": ['
-        '{"registryType": "pypi", "identifier": "secobserve-mcp", "version": "0.8.0"}, '
-        '{"registryType": "oci", "identifier": "ghcr.io/o/p:0.8.0", "version": "0.8.0"}]}'
-    )
-    bumped = release.bump_server_json(server, "0.8.0", "1.0.0")
+    """An OCI package states its version only in `identifier`, so no `version` field would ever move it."""
+    bumped = release.bump_server_json(OCI_SERVER, "0.8.0", "1.0.0")
 
     assert '"ghcr.io/o/p:1.0.0"' in bumped
     assert "0.8.0" not in bumped
 
 
-def test_an_oci_package_that_still_carries_a_base_url_is_refused_before_it_is_published() -> None:
+@pytest.mark.parametrize(
+    "extra",
+    ('"registryBaseUrl": "https://ghcr.io"', '"version": "0.8.0"', '"fileSha256": "abc"'),
+)
+def test_an_oci_package_carrying_a_forbidden_field_is_refused_before_anything_is_published(extra: str) -> None:
     """Measured against the live registry: it rejects the whole publish, after PyPI has already accepted."""
-    server = (
-        '{"version": "0.8.0", "packages": ['
-        '{"registryType": "pypi", "identifier": "secobserve-mcp", "version": "0.8.0"}, '
-        '{"registryType": "oci", "registryBaseUrl": "https://ghcr.io", '
-        '"identifier": "ghcr.io/o/p:0.8.0", "version": "0.8.0"}]}'
-    )
-    with pytest.raises(release.Abort, match="registryBaseUrl"):
+    server = OCI_SERVER.replace('"registryType": "oci", ', '"registryType": "oci", ' + extra + ", ")
+    field = extra.split('"')[1]
+
+    with pytest.raises(release.Abort, match=field):
         release.bump_server_json(server, "0.8.0", "1.0.0")
 
 
 def test_an_oci_identifier_left_on_an_old_tag_is_refused() -> None:
     """A stale image reference publishes cleanly and points every docker user at the previous release."""
-    server = (
-        '{"version": "0.8.0", "packages": ['
-        '{"registryType": "pypi", "identifier": "secobserve-mcp", "version": "0.8.0"}, '
-        '{"registryType": "oci", "identifier": "ghcr.io/o/p:0.7.0", "version": "0.8.0"}]}'
-    )
+    server = OCI_SERVER.replace("ghcr.io/o/p:0.8.0", "ghcr.io/o/p:0.7.0")
+
     with pytest.raises(release.Abort, match="does not end in the version"):
         release.bump_server_json(server, "0.8.0", "1.0.0")
+
+
+def test_this_repository_satisfies_every_rule_the_registry_applies_to_an_oci_package() -> None:
+    """None of these are in the published JSON schema, and v0.8.0 shipped to PyPI before one of them bit."""
+    root = Path(__file__).parent.parent
+    manifest = json.loads((root / "server.json").read_text())
+    oci = [package for package in manifest["packages"] if package["registryType"] == "oci"]
+    assert oci, "the OCI package is what the container install instructions point at"
+
+    for package in oci:
+        assert "registryBaseUrl" not in package
+        assert "version" not in package
+        assert "fileSha256" not in package
+        registry, _, tagged = package["identifier"].partition("/")
+        assert registry == "ghcr.io", "the registry only accepts an allowlisted host"
+        assert tagged.endswith(":" + manifest["version"])
+
+    label = f'LABEL io.modelcontextprotocol.server.name="{manifest["name"]}"'
+    assert label in (root / "Dockerfile").read_text()
+
+
+def test_the_image_is_pushed_before_the_manifest_that_points_at_it() -> None:
+    """The registry pulls the image during publish, so the reverse order fails with "does not exist"."""
+    workflow = (Path(__file__).parent.parent / ".github/workflows/release.yml").read_text()
+
+    assert workflow.index("Publish the container image") < workflow.index("Publish to the MCP Registry")
+    assert workflow.index("Publish to PyPI") < workflow.index("Publish the container image")
+
+
+def test_the_release_script_refuses_a_dockerfile_without_the_ownership_label(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Without it the registry refuses the publish, minutes after PyPI has taken the version for good."""
+    (tmp_path / "server.json").write_text(
+        '{"name": "io.github.o/p", "version": "1.0.0", "packages": [{"registryType": "oci", '
+        '"identifier": "ghcr.io/o/p:1.0.0"}]}'
+    )
+    (tmp_path / "Dockerfile").write_text("FROM python:3.13-slim\n")
+    monkeypatch.setattr(release, "ROOT", tmp_path)
+
+    with pytest.raises(release.Abort, match="ownership label"):
+        release.check_oci_label()
+
+    (tmp_path / "Dockerfile").write_text(
+        'FROM python:3.13-slim\nLABEL io.modelcontextprotocol.server.name="io.github.o/p"\n'
+    )
+    release.check_oci_label()

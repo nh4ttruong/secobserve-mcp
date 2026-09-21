@@ -52,18 +52,13 @@ jobs:
         # so a later step failing does not strand the release.
         run: uv publish --trusted-publishing always --check-url https://pypi.org/simple/secobserve-mcp/
 
-      - name: Publish to the MCP Registry
-        run: |
-          curl -sSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/').tar.gz" \
-            | tar xz mcp-publisher
-          ./mcp-publisher login github-oidc
-          ./mcp-publisher publish
-
       # arm64 is built under emulation, which QEMU has to provide.
       - uses: docker/setup-qemu-action@v4.4.0
       - uses: docker/setup-buildx-action@v4.4.1
 
       - name: Publish the container image
+        # Before the registry step, not after: the registry pulls this image anonymously and reads its
+        # ownership label, so publishing the manifest first fails with "OCI image does not exist".
         run: |
           echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           image="ghcr.io/${{ github.repository }}"
@@ -73,8 +68,26 @@ jobs:
             -t "$image:latest" \
             --push .
 
+      - name: Publish to the MCP Registry
+        # It re-validates everything against the live world: the PyPI version has to be visible, the image
+        # has to be pullable anonymously, and both have to carry the ownership marker. PyPI's index is
+        # eventually consistent, so give it room rather than failing a release on cache propagation.
+        run: |
+          curl -sSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/').tar.gz" \
+            | tar xz mcp-publisher
+          ./mcp-publisher login github-oidc
+          for attempt in 1 2 3 4 5; do
+            if ./mcp-publisher publish; then
+              exit 0
+            fi
+            echo "publish attempt $attempt failed; retrying in 30s" >&2
+            sleep 30
+          done
+          echo "the registry refused the publish five times; PyPI and the image are already released" >&2
+          exit 1
+
       - name: Create the GitHub release
-        # Last, so a release only appears once PyPI and the registry both took it.
+        # Last, so a release only appears once PyPI, the image and the registry have all taken it.
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --verify-tag

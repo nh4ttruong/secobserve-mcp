@@ -16,6 +16,10 @@ COPY --from=builder /wheels /wheels
 RUN python -m pip install --no-cache-dir /wheels/* \
     && rm -rf /wheels
 
+# The MCP Registry reads this label off the published image and refuses the release unless it equals the
+# server name in server.json. It is the only ownership proof it applies to an OCI package.
+LABEL io.modelcontextprotocol.server.name="io.github.nh4ttruong/secobserve-mcp"
+
 USER secobserve
 # Both SECOBSERVE_IMPORT_DIR and SECOBSERVE_EXPORT_DIR default to the working directory, and at / that
 # makes exports unwritable and gives the upload confinement the whole filesystem as its root.
