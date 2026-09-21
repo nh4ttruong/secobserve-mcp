@@ -33,7 +33,7 @@ Do not expand into these without the user asking.
 
 - Python 3.11+ (uses `X | None`, `from __future__ import annotations` in every module).
 - Entry point: `secobserve-mcp = secobserve_mcp.__main__:main`.
-- MCP: **SDK 2.x** (`mcp>=2.2,<3`). The class is `MCPServer` in `mcp.server.mcpserver`, **not** `FastMCP` — that name is the 1.x API and is gone.
+- MCP: **SDK 2.x**, pinned to one minor (`mcp>=2.2,<2.3`) because the per-request credential hangs off a hook the SDK marks provisional. The class is `MCPServer` in `mcp.server.mcpserver`, **not** `FastMCP` — that name is the 1.x API and is gone.
 - HTTP: one `httpx.AsyncClient` shared for the process lifetime, never one per request.
 - Validation: Pydantic v2 via `Annotated[..., Field(...)]` on each tool argument; the signature is the schema.
 - Tests: `pytest` + `pytest-asyncio` (`asyncio_mode = "auto"`) with `respx` mocking HTTP. Never call mutating endpoints on a real SecObserve instance from a test.
@@ -277,6 +277,7 @@ A published version is permanent. PyPI does not allow re-uploading a version, so
 - `secobserve_trigger_scan` and `secobserve_api_import` block until the backend finishes. A timeout does not cancel the work in flight; check `vulnerability_checks` rather than retrying blind.
 - No automated integration test runs in CI: verification against a real backend is still manual, via `--check` and `evals/seed.py`.
 - Publishing is tokenless: PyPI trusted publishing plus GitHub OIDC for the registry. Both are configured on the provider side, not in this repo, so a fresh fork cannot release without setting them up.
+- The per-request credential is bound on the MCP SDK's `Server.middleware`, which the SDK marks provisional and may change within a minor. The dependency is pinned to one SDK minor for that reason, and the tests fail if the hook stops binding, but only where they run: nothing checks it at runtime, so a deployment that did resolve a version where the hook is ignored would serve every caller as the environment credential with no error. A startup self-check in `app.py` is what would close it.
 - The OpenAPI schema is cached in-process for `SCHEMA_TTL_SECONDS` (300). A backend upgraded mid-run is picked up within that window, not immediately; restart the server if you need it now. Callers past the TTL may refetch concurrently — the GET is idempotent, and a module-level `asyncio.Lock` would break across the event loops the tests create.
 
 Do not hide these limitations in tool descriptions or documentation when making related changes.
