@@ -107,8 +107,9 @@ async def test_metrics_prompts_keep_the_staleness_and_default_branch_caveats(nam
     arguments = {"month": "2026-08"} if name == "monthly-report" else {}
     text = _text(await mcp.get_prompt(name, arguments))
 
-    assert 'secobserve_product_metrics(kind="status")' in text
-    assert "last_calculated" in text
+    assert "`stale` block" in text
+    assert "do not reason from `last_calculated` on your own" in text
+    assert "reports that it just ran" in text
     assert "fifteen counts at `0`" in text
     assert "default branch only" in text
     assert "never for a product group" in text

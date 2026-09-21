@@ -504,7 +504,8 @@ async def test_several_approvals_use_the_bulk_endpoint() -> None:
     assert body["rejection_remark"] == "Evidence missing."
 
 
-CURRENT_METRICS = {"active_critical": 0, "active_high": 0, "open": 0, "risk_accepted": 0}
+# Non-zero on purpose: an all-zero payload is the ambiguous case, and the never-calculated tests below own it.
+CURRENT_METRICS = {"active_critical": 3, "active_high": 0, "open": 3, "risk_accepted": 0}
 
 
 def metrics_status_route(last_calculated: datetime | None, interval: object = 60) -> respx.Route:

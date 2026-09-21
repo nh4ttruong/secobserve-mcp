@@ -432,6 +432,36 @@ def _metrics_staleness(status: Any) -> dict[str, Any] | None:
     }
 
 
+async def _never_calculated(product_id: int | None) -> dict[str, Any] | None:
+    """A block when the job has never run, which `last_calculated` cannot tell you.
+
+    Product_Metrics_Status is a get_or_create singleton whose last_calculated defaults to now, so the first read on
+    an instance that never calculated creates the row and reports that it just did. An empty timeline is the only
+    thing that separates "never ran" from "ran and everything really is zero".
+    """
+    timeline = await request("GET", "/metrics/product_metrics_timeline/", params={"product_id": product_id})
+    if isinstance(timeline, dict) and timeline:
+        return None
+    return {
+        "last_calculated": None,
+        "warning": (
+            "The metrics job has never run on this instance: the whole timeline is empty, and the timestamp "
+            "product_metrics_status reports is when that row was created rather than when anything was calculated. "
+            "Every count below is a zero the backend filled in, not a measurement. Do not quote these numbers. "
+            "Run secobserve_run_periodic_task(task='calculate_product_metrics'), "
+            "or count the rows themselves with secobserve_list."
+        ),
+    }
+
+
+def _all_counters_zero(payload: Any) -> bool:
+    """Every count zero, which is either an empty instance or a job that never ran; only the timeline tells you."""
+    if not isinstance(payload, dict):
+        return False
+    counts = [v for k, v in payload.items() if k != "stale" and isinstance(v, int) and not isinstance(v, bool)]
+    return bool(counts) and not any(counts)
+
+
 def _calculation_interval(status: Any) -> timedelta:
     """How often the metrics job is meant to run, with anything unusable read as the backend's own default.
 
@@ -645,6 +675,8 @@ async def secobserve_product_metrics(
     elif kind == "current":
         payload = await request("GET", "/metrics/product_metrics_current/", params={"product_id": product_id})
         stale = _metrics_staleness(await request("GET", "/metrics/product_metrics_status/"))
+        if stale is None and _all_counters_zero(payload):
+            stale = await _never_calculated(product_id)
         if stale and isinstance(payload, dict):
             payload["stale"] = stale
     else:
