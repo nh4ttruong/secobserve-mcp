@@ -58,8 +58,6 @@ src/secobserve_mcp/
 └── __main__.py         # argparse, --check, transport selection
 
 scripts/release.py      # version bump, checks, commit and tag -- never pushes
-evals/seed.py           # seeds the dataset evaluation.xml asks about, via the server's own tools
-evaluation.xml          # read-only questions with verified answers
 ```
 
 Layering rule: `tools_*` holds no HTTP and never calls `httpx` directly; every request goes through `client.request`. `client` holds no business logic and knows nothing about resources; all resource knowledge lives in `registry` or is read from `schema`.
@@ -175,13 +173,12 @@ SECOBSERVE_BASE_URL=... SECOBSERVE_API_TOKEN=... uv run secobserve-mcp --check
 
 then open a `ClientSession` over `stdio_client` and run `list_tools()` plus at least one successful and one failing `call_tool()`.
 
-For changes touching the write paths (create, import, assessment, tasks), run `evals/seed.py` against a disposable **empty** instance.
+For changes touching the write paths (create, import, assessment, tasks), exercise them against a disposable **empty** instance before trusting them; nothing in CI does.
 
 ### When handing over
 
 - Name the main files changed, and which verification commands you ran and passed.
 - State whether you called a real instance, and which one.
-- If you changed an answer in `evaluation.xml`, say how you re-verified it.
 
 ## Contributing
 
@@ -209,7 +206,7 @@ Conventional Commits, one logical change per commit:
 <footer>
 ```
 
-`type` is one of `feat`, `fix`, `docs`, `refactor`, `test`, `perf`, `build`, `ci`, `chore`. `scope` is optional and names the area, usually a module without its extension: `client`, `registry`, `schema`, `tools-crud`, `tools-workflows`, `evals`, `release`.
+`type` is one of `feat`, `fix`, `docs`, `refactor`, `test`, `perf`, `build`, `ci`, `chore`. `scope` is optional and names the area, usually a module without its extension: `client`, `registry`, `schema`, `tools-crud`, `tools-workflows`, `release`.
 
 The subject is imperative, lower case, no trailing period, at most 72 characters: `fix(schema): reject unknown filters before sending the request`.
 
@@ -276,7 +273,7 @@ A published version is permanent. PyPI does not allow re-uploading a version, so
 
 - `registry.py` is a hand-written list and can fall behind when the backend adds resources. Filters and fields cannot drift, since they are read from the live schema, but **a new resource will not appear** until it is added by hand.
 - `secobserve_trigger_scan` and `secobserve_api_import` block until the backend finishes. A timeout does not cancel the work in flight; check `vulnerability_checks` rather than retrying blind.
-- The integration job stands up a real SecObserve nightly and on demand, never on a pull request, so a change that only breaks against a live backend is caught within a day rather than at review. It pins one SecObserve version at a time and there is no compatibility matrix. Its one external dependency is the backend fetching the SPDX and ScanCode license lists at startup, which it swallows on failure.
+- Nothing in CI runs against a real SecObserve. Every check is offline, so a change that only breaks against a live backend is found by someone using it. This is deliberate and it has a cost: the correctness bugs this repository has shipped were all found that way, not by a test.
 - Publishing is tokenless: PyPI trusted publishing plus GitHub OIDC for the registry. Both are configured on the provider side, not in this repo, so a fresh fork cannot release without setting them up.
 - The per-request credential and the audit log both hang off the MCP SDK's `Server.middleware`, which the SDK marks provisional. Three things guard it: the dependency is pinned to one SDK minor, the tests fail if the hook stops binding, and `app.py` drives a synthetic message through the chain at import and refuses to start when the credential did not bind. What that last one cannot see is a future transport bypassing `ServerRunner`, which every transport in 2.2 goes through.
 - The OpenAPI schema is cached in-process for `SCHEMA_TTL_SECONDS` (300). A backend upgraded mid-run is picked up within that window, not immediately; restart the server if you need it now. Callers past the TTL may refetch concurrently — the GET is idempotent, and a module-level `asyncio.Lock` would break across the event loops the tests create.

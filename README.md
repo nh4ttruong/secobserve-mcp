@@ -15,7 +15,7 @@
 [![SecObserve](https://img.shields.io/badge/SecObserve-1.59.0-0b7285?style=flat-square)](https://github.com/MaibornWolff/SecObserve)
 [![License](https://img.shields.io/github/license/nh4ttruong/secobserve-mcp?style=flat-square&color=green)](LICENSE)
 
-[Tools](#tools) • [Install](#install) • [Configure](#configure) • [Register with a client](#register-with-a-client) • [Design](#design) • [Evaluation](#evaluation)
+[Tools](#tools) • [Install](#install) • [Configure](#configure) • [Register with a client](#register-with-a-client) • [Design](#design)
 
 </div>
 
@@ -247,19 +247,6 @@ uv run pytest
 The suite mocks the SecObserve API with `respx`: it covers projection, pagination metadata, error translation, the read-only and delete guards, upload path confinement, unknown-filter rejection, schema slicing, and the assessment/approval payload rules.
 
 `ruff check`, `ruff format --check` and `mypy --strict` are clean.
-
-## Evaluation
-
-`evaluation.xml` holds 26 read-only questions for measuring how well an agent uses this server. Data questions need several tool calls — resolving a name to an id, filtering a list, correlating two resources. Behaviour questions cover the catalogue, the live schema, the default projection, pagination, and the guards that must fail loudly rather than return a plausible wrong number.
-
-The answers are verified against the dataset `evals/seed.py` creates: three products, two of them in a product group, four branches, 21 findings from five scanners, an SBOM with a license-policy verdict, and three assessments. Seed an **empty** instance, since the answers are counts:
-
-```bash
-SECOBSERVE_BASE_URL=... SECOBSERVE_API_TOKEN=... SECOBSERVE_IMPORT_DIR=/tmp/so-seed \
-  uv run python evals/seed.py
-```
-
-The seed script drives the server's own tools, so a clean run is also an end-to-end check of the create, import, assessment and background-task paths against a real backend.
 
 ---
 
