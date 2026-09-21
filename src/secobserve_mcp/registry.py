@@ -338,6 +338,8 @@ RESOURCES: dict[str, Resource] = {
             "filename",
             "api_configuration_name",
             "scanner",
+            # The only column that answers "has my scan landed yet", which the blocking tools hand over on a timeout.
+            "last_import",
             "last_import_observations_new",
             "last_import_observations_updated",
             "last_import_observations_resolved",

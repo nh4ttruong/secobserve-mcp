@@ -840,6 +840,109 @@ async def secobserve_upload_file(
     return _summarise_import(payload, f"Imported {filename} as {kind} via {path}.")
 
 
+_SCAN_CAVEAT = (
+    "A scan of a product with no license components writes no row at all, so an absent row can also mean there was "
+    "nothing to scan; a product-wide scan writes one row per branch and per service as it goes, so one fresh row "
+    "means that part finished and not the whole scan."
+)
+_IMPORT_CAVEAT = (
+    "An API import writes exactly one row, at the very end, so an unchanged last_import means it is still running."
+)
+#: `_last_check_at` read the rows and found none, as opposed to not having been able to read them.
+_NO_ROW = ""
+_CHECK_FIELDS = (
+    "['product', 'branch', 'scanner', 'last_import', 'last_import_observations_new', "
+    "'last_import_observations_updated', 'last_import_observations_resolved']"
+)
+
+
+def _timed_out(exc: SecObserveError) -> bool:
+    """Whether the call ran out of time, as opposed to being rejected; this is the wording client.request gives httpx."""
+    return "timed out after" in str(exc)
+
+
+async def _last_check_at(filters: dict[str, Any]) -> str | None:
+    """last_import of the newest matching vulnerability_checks row, `_NO_ROW` when there is none, None when unread.
+
+    Taken before a blocking call so a timeout is answered by comparing two backend timestamps, instead of a backend
+    timestamp against this server's clock. Failing to read it costs the hint, never the import -- but it must not be
+    reported as "there was no row", which would make the next row that appears look like this run finishing.
+    """
+    try:
+        payload = await request(
+            "GET", "/vulnerability_checks/", params={**filters, "ordering": "-last_import", "page_size": 1}
+        )
+    except SecObserveError:
+        return None
+    results = payload.get("results") if isinstance(payload, dict) else None
+    if not isinstance(results, list) or not results or not isinstance(results[0], dict):
+        return _NO_ROW
+    last_import = results[0].get("last_import")
+    return str(last_import) if last_import else _NO_ROW
+
+
+async def _api_import_check_filters(
+    api_configuration_id: int | None, api_configuration_name: str | None, branch_id: int | None
+) -> dict[str, Any]:
+    """The vulnerability_checks filters that match the row this import will write, empty when it cannot be identified.
+
+    The row carries the configuration's name and not its id, so the id form has to resolve it, and a token with only
+    the Upload role may not read that endpoint.
+    """
+    filters: dict[str, Any] = {}
+    if api_configuration_name:
+        filters["api_configuration_name"] = api_configuration_name
+    elif api_configuration_id:
+        try:
+            config = await request("GET", f"/api_configurations/{api_configuration_id}/")
+        except SecObserveError:
+            return {}
+        if not isinstance(config, dict) or not config.get("name"):
+            return {}
+        if isinstance(config.get("product"), int):
+            filters["product"] = config["product"]
+        filters["api_configuration_name"] = config["name"]
+    if branch_id and filters:
+        filters["branch"] = branch_id
+    return filters
+
+
+def _still_running(what: str, filters: dict[str, Any], baseline: str | None, caveat: str) -> str:
+    """Report a timed-out blocking call as work in flight, with the query that shows it landing."""
+    lines = [
+        (
+            f"Still running, no counts available: {what} did not answer within the HTTP timeout, and the timeout "
+            "does not cancel it -- SecObserve does this work inside the request. Do not call this tool again; a "
+            "second call starts a second run."
+        ),
+    ]
+    if filters:
+        rendered = ", ".join(f"{key!r}: {value!r}" for key, value in filters.items())
+        lines.append(
+            f"Check it with secobserve_list(resource='vulnerability_checks', filters={{{rendered}}}, "
+            f"fields={_CHECK_FIELDS}, ordering='-last_import'): the row is written when the work finishes."
+        )
+        if baseline:
+            lines.append(f"That row's last_import was {baseline} before this call, so a later value is this run.")
+        elif baseline == _NO_ROW:
+            lines.append("No such row existed before this call, so the first one to appear is this run finishing.")
+        else:
+            lines.append(
+                "The row could not be read before this call, so compare its last_import against the time of this "
+                "call rather than against a baseline."
+            )
+    else:
+        lines.append(
+            "The row is keyed by the API configuration's name, which could not be read here: get it with "
+            "secobserve_get(resource='api_configurations', id=<the id you passed>), then list vulnerability_checks "
+            f"with fields={_CHECK_FIELDS} filtered on that api_configuration_name and compare its last_import "
+            "against the time of this call."
+        )
+    lines.append(caveat)
+    lines.append("Raise SECOBSERVE_TIMEOUT if you need the counts back from the call itself.")
+    return "\n".join(lines)
+
+
 @mcp.tool(
     name="secobserve_api_import",
     title="Pull Findings From Configured API",
@@ -872,7 +975,9 @@ async def secobserve_api_import(
 
     The credentials, base URL and parser come from an API configuration stored on
     the product; list them with secobserve_list(resource="api_configurations").
-    The call blocks while SecObserve fetches and parses, so it can take a while.
+    SecObserve fetches and parses inside the request, so the call blocks and can
+    outlast the HTTP timeout. When it does, this returns the state of the work
+    rather than a bare timeout, because the import is still running server-side.
 
     Args:
         api_configuration_id (Optional[int]) or api_configuration_name
@@ -884,7 +989,10 @@ async def secobserve_api_import(
 
     Returns:
         str: observations_new, observations_updated and observations_resolved as
-             reported by the API, one per line.
+             reported by the API, one per line. On a timeout, a "Still running"
+             text instead: no counts, the secobserve_list call on
+             vulnerability_checks that shows the import landing, and that row's
+             last_import from before the call, which a later value beats.
 
     Examples:
         - Use when: "refresh findings from our Dependency Track project" ->
@@ -894,9 +1002,9 @@ async def secobserve_api_import(
 
     Error Handling:
         400 means the upstream call or parse failed -- the message carries the
-        upstream error. A timeout does not mean the import failed: check
-        secobserve_list(resource="vulnerability_checks") before retrying, or raise
-        SECOBSERVE_TIMEOUT.
+        upstream error. A timeout is answered with "Still running" and the query
+        that settles it; never retry on one, since the first import is still
+        going and a second call would run the whole fetch again.
     """
     if bool(api_configuration_id) == bool(api_configuration_name):
         raise ValueError("Give exactly one of api_configuration_id or api_configuration_name.")
@@ -919,8 +1027,16 @@ async def secobserve_api_import(
     if endpoint_url:
         body["endpoint_url"] = endpoint_url
 
-    payload = await request("POST", path, json_body=body)
+    check_filters = await _api_import_check_filters(api_configuration_id, api_configuration_name, branch_id)
+    baseline = await _last_check_at(check_filters) if check_filters else None
     target = api_configuration_name or api_configuration_id
+
+    try:
+        payload = await request("POST", path, json_body=body)
+    except SecObserveError as exc:
+        if not _timed_out(exc):
+            raise
+        return _still_running(f"the import from API configuration {target}", check_filters, baseline, _IMPORT_CAVEAT)
     return _summarise_import(payload, f"Imported from API configuration {target}.")
 
 
@@ -956,8 +1072,9 @@ async def secobserve_trigger_scan(
     These scanners need no report: they look up the components SecObserve already
     has, which is why they are the usual follow-up to an SBOM import. Each must be
     enabled on the product (osv_enabled / vulnerablecode_enabled) or the call is
-    rejected. The request blocks until the scan finishes, so a product with many
-    components can exceed the HTTP timeout.
+    rejected. SecObserve scans inside the request, so a product with many
+    components can exceed the HTTP timeout. When it does, this returns the state
+    of the scan rather than a bare timeout, because the scan is still running.
 
     Args:
         scanner (str): "osv" or "vulnerablecode".
@@ -966,7 +1083,10 @@ async def secobserve_trigger_scan(
 
     Returns:
         str: observations_new, observations_updated and observations_resolved for
-             the scan, one per line.
+             the scan, one per line. On a timeout, a "Still running" text instead:
+             no counts, the secobserve_list call on vulnerability_checks that
+             shows the scan landing, and that row's last_import from before the
+             call, which a later value beats.
 
     Examples:
         - Use when: "re-check product 12 against osv.dev" -> scanner="osv", product_id=12
@@ -975,14 +1095,31 @@ async def secobserve_trigger_scan(
 
     Error Handling:
         400 "OSV scan is not enabled for product X" means enable it on the product
-        first (secobserve_update, data={"osv_enabled": true}). A timeout does not
-        cancel the scan -- check secobserve_list(resource="vulnerability_checks")
-        rather than retrying blind.
+        first (secobserve_update, data={"osv_enabled": true}). A timeout is
+        answered with "Still running" and the query that settles it; never retry
+        on one, since the first scan is still going.
     """
     suffix = f"scan_{'osv' if scanner == 'osv' else 'vulnerablecode'}"
     path = f"/products/{product_id}/{branch_id}/{suffix}/" if branch_id else f"/products/{product_id}/{suffix}/"
-    payload = await request("POST", path)
     scope = f"branch {branch_id}" if branch_id else "all branches"
+
+    # The scan writes its rows under the parser's own name, of which these are the stable prefix.
+    check_filters: dict[str, Any] = {
+        "product": product_id,
+        "scanner": "OSV" if scanner == "osv" else "VulnerableCode",
+    }
+    if branch_id:
+        check_filters["branch"] = branch_id
+    baseline = await _last_check_at(check_filters)
+
+    try:
+        payload = await request("POST", path)
+    except SecObserveError as exc:
+        if not _timed_out(exc):
+            raise
+        return _still_running(
+            f"the {scanner} scan of product {product_id} ({scope})", check_filters, baseline, _SCAN_CAVEAT
+        )
     return _summarise_import(payload, f"{scanner} scan of product {product_id} ({scope}) finished.")
 
 
