@@ -30,6 +30,7 @@ from secobserve_mcp.tools_workflows import (
     secobserve_run_periodic_task,
     secobserve_upload_file,
 )
+from secobserve_mcp.types import Status, VexJustification
 
 PRODUCTS = [
     {"name": "Payments API", "description": "Card and transfer processing."},
@@ -273,6 +274,10 @@ async def main() -> int:
         if len(target) != 1:
             raise SystemExit(f"Expected one observation titled {assessment['title']}, got {len(target)}")
         payload = {k: v for k, v in assessment.items() if k not in {"product", "branch", "title"}}
+        # Calling the tool as a function skips the Pydantic coercion an MCP client gets, so the enums are built here.
+        payload["status"] = Status(payload["status"])
+        if "vex_justification" in payload:
+            payload["vex_justification"] = VexJustification(payload["vex_justification"])
         await secobserve_assess_observation(observation_id=target[0]["id"], **payload)
         print(f"assessed {assessment['title']} -> {assessment['status']}")
 
