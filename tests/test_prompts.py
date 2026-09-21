@@ -15,6 +15,7 @@ EXPECTED = {
     "daily-report",
     "weekly-report",
     "monthly-report",
+    "quick-report",
 }
 METRICS_PROMPTS = ("daily-report", "weekly-report", "monthly-report")
 CHANGE_FEED_PROMPTS = ("daily-changes", "weekly-changes", "daily-report", "weekly-report", "monthly-report")
@@ -43,6 +44,7 @@ async def test_prompt_arguments_declare_what_is_required() -> None:
         "daily-report": set(),
         "weekly-report": set(),
         "monthly-report": {"month"},
+        "quick-report": set(),
     }
 
 
@@ -302,7 +304,7 @@ async def test_the_empty_feed_sentence_has_a_section_that_accepts_it(name: str) 
     assert "an empty feed with this section left at an em dash is a run that quietly reported calm" in text
 
 
-LINKED_PROMPTS = ("daily-changes", "weekly-changes", "daily-report", "weekly-report")
+LINKED_PROMPTS = ("daily-changes", "weekly-changes", "daily-report", "weekly-report", "quick-report")
 
 
 @pytest.mark.parametrize("name", LINKED_PROMPTS)
@@ -322,3 +324,62 @@ async def test_a_log_row_links_by_observation_and_not_by_its_own_id(name: str) -
 
     assert "the finding's id is the `observation` field" in text
     assert "a real but unrelated finding, which is worse than no link" in text
+
+
+async def test_quick_report_says_which_kind_of_thing_it_is_reporting_on() -> None:
+    """A bare name reads as a product, so a group headed that way is compared against the wrong thing."""
+    product = _text(await mcp.get_prompt("quick-report", {"product": "Portal"}))
+    group = _text(await mcp.get_prompt("quick-report", {"product_group": "Portal"}))
+    estate = _text(await mcp.get_prompt("quick-report", {}))
+
+    assert "`Product: [<name>](<product link>)" in product
+    assert "product_group_names" not in product
+
+    assert "`Product group: [<name>](<group link>)" in group
+    assert "product_group_names" in group
+    assert '"product_group": <id>' in group
+
+    assert "Estate: every product this token can see" in estate
+    assert "no scope key at all" in estate
+
+    for text in (product, group, estate):
+        assert "The words `Product`, `Product group` and `Estate` are load-bearing" in text
+
+
+async def test_quick_report_refuses_two_scopes_instead_of_picking_one() -> None:
+    """Reporting on either one silently answers a question that was not asked."""
+    text = _text(await mcp.get_prompt("quick-report", {"product": "Portal", "product_group": "Platform"}))
+
+    assert "takes one or the other" in text
+    assert "Portal" in text and "Platform" in text
+    assert "Table 1" not in text
+
+
+async def test_quick_report_counts_observations_rather_than_the_precalculated_columns() -> None:
+    """Both shortcuts are default-branch only and both return zeroes when the job has not run."""
+    text = _text(await mcp.get_prompt("quick-report", {}))
+
+    assert "Take none of these numbers from `secobserve_product_metrics`" in text
+    assert "active_critical_observation_count" not in text
+    assert '"current_status": ["Open", "Affected", "In review"]' in text
+    assert "Never add the six up to get the total" in text
+
+
+async def test_quick_report_does_not_call_its_five_rows_the_worst() -> None:
+    """Severity is the only ordering, so within Critical the five are arbitrary and a superlative is a lie."""
+    text = _text(await mcp.get_prompt("quick-report", {}))
+
+    assert "the API imposes no ordering you can rely on" in text
+    assert "not the five worst, the five newest or the five most urgent" in text
+    assert "in no particular order" in text
+    assert 'ordering="-current_severity"' not in text
+
+
+async def test_quick_report_reads_more_rows_than_it_prints_so_five_are_five_things() -> None:
+    """Measured live: the first five rows were four copies of one secret in one branch and one other finding."""
+    text = _text(await mcp.get_prompt("quick-report", {}))
+
+    assert "page_size=25" in text
+    assert "**Read 25 and print 5.**" in text
+    assert "Collapse rows that share a title, a product and a branch" in text
+    assert "reported a single finding five times" in text
