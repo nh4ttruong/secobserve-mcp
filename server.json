@@ -39,6 +39,63 @@
           "isRequired": false
         }
       ]
+    },
+    {
+      "registryType": "oci",
+      "registryBaseUrl": "https://ghcr.io",
+      "identifier": "nh4ttruong/secobserve-mcp",
+      "version": "0.7.0",
+      "runtimeHint": "docker",
+      "runtimeArguments": [
+        {
+          "type": "positional",
+          "value": "--rm",
+          "valueHint": "--rm"
+        },
+        {
+          "type": "positional",
+          "value": "-i",
+          "valueHint": "-i"
+        }
+      ],
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "--transport",
+          "valueHint": "--transport"
+        },
+        {
+          "type": "positional",
+          "value": "stdio",
+          "valueHint": "stdio"
+        }
+      ],
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "SECOBSERVE_BASE_URL",
+          "description": "SecObserve base URL without /api, e.g. https://secobserve.example.com",
+          "isRequired": true
+        },
+        {
+          "name": "SECOBSERVE_API_TOKEN",
+          "description": "SecObserve user or product API token",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "SECOBSERVE_READ_ONLY",
+          "description": "Set to true to refuse every write operation",
+          "isRequired": false
+        },
+        {
+          "name": "SECOBSERVE_ALLOW_DELETE",
+          "description": "Set to true to enable the delete tool; deletion cascades and is irreversible",
+          "isRequired": false
+        }
+      ]
     }
   ]
 }

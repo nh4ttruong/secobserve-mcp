@@ -22,10 +22,15 @@ def test_the_version_is_rewritten_in_both_places() -> None:
     assert release.bump_server_json(server, "0.2.2", "0.3.0").count('"version": "0.3.0"') == 2
 
 
-def test_server_json_must_carry_the_version_exactly_twice() -> None:
-    """Both places ship: one is the registry entry, the other is the PyPI package the registry points at."""
+def test_server_json_must_carry_more_than_the_servers_own_version() -> None:
+    """Every package entry carries its own, and a release that bumped only the server would publish a stale one."""
     with pytest.raises(release.Abort, match="found 1"):
         release.bump_server_json('{"version": "0.2.2"}', "0.2.2", "0.3.0")
+
+
+def test_every_package_version_is_rewritten_however_many_there_are() -> None:
+    server = '{"version": "0.2.2", "packages": [{"version": "0.2.2"}, {"version": "0.2.2"}]}'
+    assert release.bump_server_json(server, "0.2.2", "0.3.0").count('"version": "0.3.0"') == 3
 
 
 @pytest.mark.parametrize("version", ("0.3", "v0.3.0", "0.3.0a1", ""))

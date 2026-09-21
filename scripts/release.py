@@ -57,11 +57,11 @@ def bump_pyproject(text: str, new: str) -> str:
 
 
 def bump_server_json(text: str, old: str, new: str) -> str:
-    """server.json carries the version twice: the server's own, and the PyPI package's."""
+    """server.json carries the version once for the server and once per package, and every one of them ships."""
     field = f'"version": "{old}"'
     count = text.count(field)
-    if count != 2:
-        raise Abort(f"expected 2 version fields in server.json, found {count}")
+    if count < 2:
+        raise Abort(f"expected the server's version and at least one package's in server.json, found {count}")
     return text.replace(field, f'"version": "{new}"')
 
 
