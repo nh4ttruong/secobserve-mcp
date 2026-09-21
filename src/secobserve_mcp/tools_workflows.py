@@ -17,7 +17,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from .app import mcp
-from .client import SecObserveError, request, tool_errors
+from .client import RequestTimeoutError, SecObserveError, request, tool_errors
 from .exports import read_upload, write_export
 from .formatting import ResponseFormat, render_object
 from .types import ApprovalStatus, MetricsAge, Severity, Status, VexJustification
@@ -439,7 +439,11 @@ async def _never_calculated(product_id: int | None) -> dict[str, Any] | None:
     an instance that never calculated creates the row and reports that it just did. An empty timeline is the only
     thing that separates "never ran" from "ran and everything really is zero".
     """
-    timeline = await request("GET", "/metrics/product_metrics_timeline/", params={"product_id": product_id})
+    # A week, not the full history: this runs only when the timestamp looks fresh, so nothing in the last seven
+    # days means nothing is being written, and the unbounded read would be one entry per retained day.
+    timeline = await request(
+        "GET", "/metrics/product_metrics_timeline/", params={"product_id": product_id, "age": MetricsAge.WEEK.value}
+    )
     if isinstance(timeline, dict) and timeline:
         return None
     return {
@@ -856,11 +860,6 @@ _CHECK_FIELDS = (
 )
 
 
-def _timed_out(exc: SecObserveError) -> bool:
-    """Whether the call ran out of time, as opposed to being rejected; this is the wording client.request gives httpx."""
-    return "timed out after" in str(exc)
-
-
 async def _last_check_at(filters: dict[str, Any]) -> str | None:
     """last_import of the newest matching vulnerability_checks row, `_NO_ROW` when there is none, None when unread.
 
@@ -922,8 +921,13 @@ def _still_running(what: str, filters: dict[str, Any], baseline: str | None, cav
             f"Check it with secobserve_list(resource='vulnerability_checks', filters={{{rendered}}}, "
             f"fields={_CHECK_FIELDS}, ordering='-last_import'): the row is written when the work finishes."
         )
-        if baseline:
+        if baseline and "product" in filters:
             lines.append(f"That row's last_import was {baseline} before this call, so a later value is this run.")
+        elif baseline:
+            lines.append(
+                f"The newest matching row's last_import was {baseline} before this call. An API configuration name "
+                "is not unique across products, so confirm the row you find belongs to the product you imported into."
+            )
         elif baseline == _NO_ROW:
             lines.append("No such row existed before this call, so the first one to appear is this run finishing.")
         else:
@@ -1033,9 +1037,7 @@ async def secobserve_api_import(
 
     try:
         payload = await request("POST", path, json_body=body)
-    except SecObserveError as exc:
-        if not _timed_out(exc):
-            raise
+    except RequestTimeoutError:
         return _still_running(f"the import from API configuration {target}", check_filters, baseline, _IMPORT_CAVEAT)
     return _summarise_import(payload, f"Imported from API configuration {target}.")
 
@@ -1114,9 +1116,7 @@ async def secobserve_trigger_scan(
 
     try:
         payload = await request("POST", path)
-    except SecObserveError as exc:
-        if not _timed_out(exc):
-            raise
+    except RequestTimeoutError:
         return _still_running(
             f"the {scanner} scan of product {product_id} ({scope})", check_filters, baseline, _SCAN_CAVEAT
         )
