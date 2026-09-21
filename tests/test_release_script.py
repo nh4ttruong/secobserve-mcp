@@ -37,3 +37,39 @@ def test_every_package_version_is_rewritten_however_many_there_are() -> None:
 def test_only_x_y_z_is_accepted(version: str) -> None:
     with pytest.raises(release.Abort, match="not x.y.z"):
         release.parse(version)
+
+
+def test_the_oci_image_tag_moves_with_the_version() -> None:
+    """The registry refuses `registryBaseUrl` on an OCI package, so the tag rides in `identifier` and must move."""
+    server = (
+        '{"version": "0.8.0", "packages": ['
+        '{"registryType": "pypi", "identifier": "secobserve-mcp", "version": "0.8.0"}, '
+        '{"registryType": "oci", "identifier": "ghcr.io/o/p:0.8.0", "version": "0.8.0"}]}'
+    )
+    bumped = release.bump_server_json(server, "0.8.0", "1.0.0")
+
+    assert '"ghcr.io/o/p:1.0.0"' in bumped
+    assert "0.8.0" not in bumped
+
+
+def test_an_oci_package_that_still_carries_a_base_url_is_refused_before_it_is_published() -> None:
+    """Measured against the live registry: it rejects the whole publish, after PyPI has already accepted."""
+    server = (
+        '{"version": "0.8.0", "packages": ['
+        '{"registryType": "pypi", "identifier": "secobserve-mcp", "version": "0.8.0"}, '
+        '{"registryType": "oci", "registryBaseUrl": "https://ghcr.io", '
+        '"identifier": "ghcr.io/o/p:0.8.0", "version": "0.8.0"}]}'
+    )
+    with pytest.raises(release.Abort, match="registryBaseUrl"):
+        release.bump_server_json(server, "0.8.0", "1.0.0")
+
+
+def test_an_oci_identifier_left_on_an_old_tag_is_refused() -> None:
+    """A stale image reference publishes cleanly and points every docker user at the previous release."""
+    server = (
+        '{"version": "0.8.0", "packages": ['
+        '{"registryType": "pypi", "identifier": "secobserve-mcp", "version": "0.8.0"}, '
+        '{"registryType": "oci", "identifier": "ghcr.io/o/p:0.7.0", "version": "0.8.0"}]}'
+    )
+    with pytest.raises(release.Abort, match="does not end in the version"):
+        release.bump_server_json(server, "0.8.0", "1.0.0")

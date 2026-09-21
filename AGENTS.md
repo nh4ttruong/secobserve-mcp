@@ -265,6 +265,8 @@ To release: `uv run python scripts/release.py <x.y.z>`. It refuses unless `main`
 
 It never pushes. `git push origin main && git push origin v<x.y.z>` stays manual, because that is the step that cannot be undone. The workflow then runs the checks again on the tag, publishes to PyPI via trusted publishing, registers with the MCP Registry via GitHub OIDC, builds the multi-arch image and creates the GitHub release.
 
+**Those steps are ordered, and PyPI is first.** A later step failing leaves a version that exists on PyPI and nowhere else, and PyPI will not take that version again, so the repair is the next patch release rather than a retag. The registry enforces rules its published JSON schema does not carry -- an OCI package must not set `registryBaseUrl`, and its `identifier` must be the canonical reference including the tag (`ghcr.io/<owner>/<image>:<x.y.z>`) -- so `server.json` is only truly validated by a release. `bump_server_json` checks both rules before it writes.
+
 There is no changelog file. The GitHub release carries the notes, generated from the merged pull request titles, which is why a pull request title has to stand on its own. Auto-generated titles cannot tell someone what to change, so **after a breaking release, edit its GitHub release notes by hand** and say what an already-configured client has to do differently.
 
 A published version is permanent. PyPI does not allow re-uploading a version, so a bad release is fixed by releasing the next patch, never by retagging.
