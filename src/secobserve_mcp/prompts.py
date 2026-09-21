@@ -161,7 +161,7 @@ The second names the single product and branch that worsened most {moved} with i
 
 **■ DEBT** is exactly three lines, the same three every run, in this order. They move on a weekly scale, so never expand them on a daily run and never add a fourth.
 Active Critical and High across every branch with the share that has a fix: `total` on `filters={{"current_severity": ["Critical", "High"], "current_status": ["Open", "Affected", "In review"]}}`, then the same call plus `"fix_available": true`. `fix_available` is nullable -- true, false, or not known -- so never read a missing value as "no fix available"; that share is a floor and the line has to read as one.
-The upgrade that closes the most: take the component names off the first page of that same filter with `ordering="-current_severity"`, keep at most five candidates, and count each one with `filters={{"origin_component_name_version": "<name>"}}, page_size=1, fields=["id"]`. One row per candidate and no other way -- there is no aggregation endpoint, and grouping by component off the rows themselves means paging six figures of them.
+The upgrade that closes the most: take the component names off the first page of that same filter with `ordering="current_severity"` -- ascending, because the column sorts alphabetically and descending puts Unknown first and Critical last. Strip any ` (deb)`, ` (npm)` or other bracketed type from the rendered name before you use it: the projection shows `util-linux:2.39.3-9ubuntu6.6 (deb)` and filtering on that exact string returns `total: 0`, which looks like a real answer. Keep at most five candidates and count each with `filters={{"origin_component_name_version": "<name>", "current_severity": ["Critical", "High"], "current_status": ["Open", "Affected", "In review"]}}, page_size=1, fields=["id"]` -- the same severities and statuses as the number above it, or the count is of everything on that component and the line overstates what the upgrade closes. One row per candidate and no other way: there is no aggregation endpoint.
 Human triage {moved}: the size of the `other` bucket, and when it is zero say it has been zero for the whole window, which is as far as this report can see. A stable zero is the alarm, and being stable is what makes it invisible."""
 
 
@@ -240,7 +240,7 @@ def triage_product(
 
 List the active findings with the default projection -- do not widen it, and never `fields=["*"]`, because an observation has around 100 columns and one full page of them is tens of thousands of tokens:
 
-`secobserve_list("observations", filters={{"product": <id>, "current_status": ["Open", "Affected", "In review"]}}, ordering="-current_severity")`
+`secobserve_list("observations", filters={{"product": <id>, "current_status": ["Open", "Affected", "In review"]}}, ordering="current_severity")` -- ascending, because that column sorts alphabetically, so descending starts at Unknown and reaches Critical last.
 
 {COUNTING}
 

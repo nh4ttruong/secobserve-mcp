@@ -236,3 +236,22 @@ async def test_a_capped_list_has_to_say_what_it_left_out(name: str) -> None:
 def _text(result: GetPromptResult | InputRequiredResult) -> str:
     assert isinstance(result, GetPromptResult)
     return "\n".join(getattr(message.content, "text", "") for message in result.messages)
+
+
+@pytest.mark.parametrize("name", ("triage-product", "daily-report", "weekly-report"))
+async def test_severity_ordering_is_ascending_because_the_column_sorts_alphabetically(name: str) -> None:
+    """Measured live: `-current_severity` returns High before Critical, so descending buries what matters."""
+    arguments = {"product": "Portal"} if name == "triage-product" else {}
+    text = _text(await mcp.get_prompt(name, arguments))
+
+    assert 'ordering="-current_severity"' not in text
+    assert 'ordering="current_severity"' in text
+
+
+async def test_the_component_count_strips_the_purl_type_and_keeps_the_filters() -> None:
+    """Filtering on the rendered `name (deb)` returns total 0, which reads as a real answer."""
+    text = _text(await mcp.get_prompt("daily-report", {}))
+
+    assert "` (deb)`" in text
+    assert "returns `total: 0`" in text
+    assert '"current_severity": ["Critical", "High"]' in text
