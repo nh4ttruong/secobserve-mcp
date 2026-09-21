@@ -8,7 +8,14 @@ from mcp.types import GetPromptResult, InputRequiredResult
 from secobserve_mcp import prompts  # noqa: F401  (import registers the prompts)
 from secobserve_mcp.app import mcp
 
-EXPECTED = {"triage-product", "daily-changes", "weekly-changes", "daily-report", "weekly-report", "monthly-report"}
+EXPECTED = {
+    "triage-product",
+    "daily-changes",
+    "weekly-changes",
+    "daily-report",
+    "weekly-report",
+    "monthly-report",
+}
 METRICS_PROMPTS = ("daily-report", "weekly-report", "monthly-report")
 CHANGE_FEED_PROMPTS = ("daily-changes", "weekly-changes", "daily-report", "weekly-report", "monthly-report")
 STANDING_PROMPTS = ("daily-report", "weekly-report")
@@ -255,3 +262,63 @@ async def test_the_component_count_strips_the_purl_type_and_keeps_the_filters() 
     assert "` (deb)`" in text
     assert "returns `total: 0`" in text
     assert '"current_severity": ["Critical", "High"]' in text
+
+
+@pytest.mark.parametrize("name", STANDING_PROMPTS)
+async def test_a_product_scoped_report_does_not_count_the_gate_across_the_estate(name: str) -> None:
+    """`products` has no `product` filter, so the estate's failing count would print under one product's name."""
+    scoped = _text(await mcp.get_prompt(name, {"product": "Portal"}))
+    estate = _text(await mcp.get_prompt(name, {}))
+
+    assert '"security_gate_passed": false' in estate
+    assert "gate <failing>/<products> failing" in estate
+
+    assert '"security_gate_passed": false' not in scoped
+    assert "gate <passing|failing|not configured>" in scoped
+    assert 'secobserve_get("products", <id>, fields=["security_gate_passed", "security_gate_active"])' in scoped
+    assert "has no `product` and no `id` filter" in scoped
+
+
+@pytest.mark.parametrize(
+    ("name", "since"),
+    (("daily-report", "yesterday, one day before today"), ("weekly-report", "the day 7 days before today")),
+)
+async def test_the_delta_window_names_two_different_days(name: str, since: str) -> None:
+    """since == until resolves to one day at both ends and returns zero per counter, which reads as a calm day."""
+    text = _text(await mcp.get_prompt(name, {}))
+
+    assert f'kind="delta", since=<{since}>, until=<today>' in text
+    assert "The two ends must be different days." in text
+    assert "passing today as both returns `0` for every counter" in text
+
+
+@pytest.mark.parametrize("name", STANDING_PROMPTS)
+async def test_the_empty_feed_sentence_has_a_section_that_accepts_it(name: str) -> None:
+    """The skeleton forbids anything unspecified between headings, so the caveat had nowhere to go and was dropped."""
+    text = _text(await mcp.get_prompt(name, {}))
+
+    assert "■ CAN I TRUST THIS** is at most three lines" in text
+    assert "one line when the change feed came back empty saying nothing changed" in text
+    assert "an empty feed with this section left at an em dash is a run that quietly reported calm" in text
+
+
+LINKED_PROMPTS = ("daily-changes", "weekly-changes", "daily-report", "weekly-report")
+
+
+@pytest.mark.parametrize("name", LINKED_PROMPTS)
+async def test_named_things_link_into_the_instance_the_server_is_configured_against(name: str) -> None:
+    """A report short enough to read on a phone is only useful if the depth is one tap away."""
+    text = _text(await mcp.get_prompt(name, {}))
+
+    assert "http://secobserve.test/#/products/<id>/show" in text
+    assert "http://secobserve.test/#/observations/<id>/show" in text
+    assert "http://secobserve.test/#/product_groups/<id>/show" in text
+
+
+@pytest.mark.parametrize("name", LINKED_PROMPTS)
+async def test_a_log_row_links_by_observation_and_not_by_its_own_id(name: str) -> None:
+    """Both fields are integers on the same row, and the wrong one resolves to a real but unrelated finding."""
+    text = _text(await mcp.get_prompt(name, {}))
+
+    assert "the finding's id is the `observation` field" in text
+    assert "a real but unrelated finding, which is worse than no link" in text
