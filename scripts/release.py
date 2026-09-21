@@ -58,11 +58,11 @@ def bump_pyproject(text: str, new: str) -> str:
 
 
 def bump_server_json(text: str, old: str, new: str) -> str:
-    """server.json carries the version for the server, for every package, and again inside each OCI image tag.
+    """server.json carries the version for the server, for every non-OCI package, and in each OCI image tag.
 
-    The registry refuses an OCI package that also carries `registryBaseUrl`, so its registry host and its tag
-    both live in `identifier`. A release that bumped only the `version` fields would publish a manifest whose
-    image reference still points at the previous release, and nothing downstream would report that.
+    An OCI package states its version only inside `identifier`, as a canonical reference. The registry
+    rejects the whole publish if such a package also carries `registryBaseUrl` or `version`, and neither
+    rule is in the published JSON schema, so a release is the first thing that ever checks them.
     """
     field = f'"version": "{old}"'
     count = text.count(field)
@@ -73,13 +73,29 @@ def bump_server_json(text: str, old: str, new: str) -> str:
     for package in json.loads(text).get("packages", []):
         if package.get("registryType") != "oci":
             continue
-        if package.get("registryBaseUrl"):
-            raise Abort("an OCI package must not carry registryBaseUrl; the registry rejects the whole publish")
+        for forbidden in ("registryBaseUrl", "version", "fileSha256"):
+            if package.get(forbidden):
+                raise Abort(f"an OCI package must not carry {forbidden}; the registry rejects the whole publish")
         identifier = str(package["identifier"])
         if not identifier.endswith(f":{old}"):
             raise Abort(f"OCI identifier {identifier} does not end in the version being released, :{old}")
         text = text.replace(f'"{identifier}"', f'"{identifier[: -len(old)]}{new}"')
     return text
+
+
+def check_oci_label() -> None:
+    """The registry pulls the image and refuses the release unless this label equals the server name.
+
+    It is checked here rather than only in the workflow because the image is built from this Dockerfile
+    minutes after the tag is pushed, and by then PyPI has the version and it can never be taken back.
+    """
+    server_name = json.loads((ROOT / "server.json").read_text())["name"]
+    packages = json.loads((ROOT / "server.json").read_text()).get("packages", [])
+    if not any(package.get("registryType") == "oci" for package in packages):
+        return
+    expected = f'LABEL io.modelcontextprotocol.server.name="{server_name}"'
+    if expected not in (ROOT / "Dockerfile").read_text():
+        raise Abort(f"Dockerfile is missing the registry's ownership label. Add: {expected}")
 
 
 def check_repo_state(new: str) -> None:
@@ -116,6 +132,7 @@ def main() -> int:
         if parse(new) <= parse(old):
             raise Abort(f"{new} is not after the current {old}")
         check_repo_state(new)
+        check_oci_label()
 
         edits = {
             "pyproject.toml": bump_pyproject((ROOT / "pyproject.toml").read_text(), new),

@@ -43,7 +43,6 @@
     {
       "registryType": "oci",
       "identifier": "ghcr.io/nh4ttruong/secobserve-mcp:0.8.0",
-      "version": "0.8.0",
       "runtimeHint": "docker",
       "runtimeArguments": [
         {
