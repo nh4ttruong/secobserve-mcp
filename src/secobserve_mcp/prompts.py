@@ -19,6 +19,7 @@ from typing import Annotated
 from pydantic import Field
 
 from .app import mcp
+from .config import get_config
 
 ProductArg = Annotated[
     str | None,
@@ -108,15 +109,36 @@ Subtract the `active_critical` of `secobserve_product_metrics(kind="current")` f
 
 When `last_calculated` is not today the second operand is zero and the difference is the whole estate, so do not subtract at all: say the standing numbers are not today's and leave the share out."""
 
-DELTAS = """A standing number with no yesterday beside it cannot be read, so every standing number in the report carries a signed delta.
 
-`secobserve_product_metrics(kind="delta", since=<start of the window>, until=<today>)` returns the signed change per counter between two dates, and `kind="status"` hands you today's date in `last_calculated`, so you never have to guess it. It resolves each end to the nearest day that has metrics and reports `requested` against `used`: when those differ the delta spans more days than you asked for, so give the reader the span it actually covers.
+def _deltas(since: str) -> str:
+    return f"""A standing number with no yesterday beside it cannot be read, so every standing number in the report carries a signed delta.
+
+`secobserve_product_metrics(kind="delta", since=<{since}>, until=<today>)` returns the signed change per counter between two dates, and `kind="status"` hands you today's date in `last_calculated`, so you never have to guess it.
+
+**The two ends must be different days.** Each one resolves to the nearest day that has metrics, so passing today as both returns `0` for every counter -- and a row of zeroes prints as a quiet day rather than as the missing comparison it is. Take today from `last_calculated`, subtract to get {since}, and pass that as `since`. A delta whose every counter is exactly zero is the symptom: when you see one, check the two dates you sent before you report calm.
+
+It reports `requested` against `used`: when those differ the delta spans more days than you asked for, so give the reader the span it actually covers.
 
 The count of products failing the security gate has no history behind it. Print it without a delta, and without a sentence explaining why it has none."""
+
 
 SILENT_PRODUCTS = """A product whose pipeline broke looks exactly like a product with nothing wrong, so no other number in the report is worth anything until you know which of the two you have.
 
 One call answers it: `secobserve_list("branches", ordering="last_import", page_size=25)`, whose default projection already carries `name`, `product`, `is_default_branch` and `last_import`. Silent means a default branch whose `last_import` is more than seven days old, on every run and whatever window the report covers, so that the line means the same thing each time; an empty `last_import` is a branch that has never imported at all. Give the count and at most three names, and give the count as a floor, because one page of an ordering is all you read."""
+
+
+def _links() -> str:
+    """Depth the report does not have room for, reachable in one tap."""
+    base = get_config().base_url
+    return f"""Every name the report gives individually is a link, and that is what lets the report stay short: the depth lives one tap away instead of in the text. Never paste a finding's description, its references, its CVSS vector or its full component list into the report -- the link is where those belong.
+
+- a product: `[<name>]({base}/#/products/<id>/show)`
+- a product group: `[<name>]({base}/#/product_groups/<id>/show)`
+- a finding: `[<title>]({base}/#/observations/<id>/show)`
+
+On an `observation_logs` row the finding's id is the `observation` field; that row's own `id` belongs to the log entry and links to nothing the reader wants. Getting those two the wrong way round produces a link that resolves to a real but unrelated finding, which is worse than no link.
+
+Link the name itself. Never print a bare URL, never write the word "link", and never add a link an id you already read cannot build -- a lookup bought only to decorate a name is not worth the call."""
 
 
 def _scope(product: str | None) -> str:
@@ -130,11 +152,21 @@ def _scope(product: str | None) -> str:
     )
 
 
-def _skeleton(moved_heading: str, window_dates: str, moved: str) -> str:
+def _gate(product: str | None) -> tuple[str, str]:
+    """The headline's gate clause, and how to compute it. `products` cannot be narrowed to one product."""
+    if not product:
+        estate = """The failing count is `secobserve_list("products", filters={"security_gate_passed": false}, page_size=1, fields=["id"])` and the product total is the same call without that filter; `security_gate_passed` is nullable, so a product with no gate configured is counted by neither, and passing is never the total minus the failing."""
+        return "gate <failing>/<products> failing", estate
+
+    one = """The gate is this one product's own. `secobserve_list("products")` has no `product` and no `id` filter, so a count taken from it is the whole estate's however the report is scoped -- reporting the estate's failing count under one product's name is the error this line exists to prevent. Read `secobserve_get("products", <id>, fields=["security_gate_passed", "security_gate_active"])` instead. `security_gate_active` false, or `security_gate_passed` null, is `not configured`, and neither is `passing`: a product nothing gates has not passed anything."""
+    return "gate <passing|failing|not configured>", one
+
+
+def _skeleton(moved_heading: str, window_dates: str, moved: str, gate_slot: str, gate_spec: str) -> str:
     return f"""Produce these four sections, in this order, under these exact heading lines, and produce nothing else -- no title, no preamble, no source note, no closing paragraph:
 
 ```text
-<scope> · {window_dates} · gate <failing>/<products> failing · <gap> Critical outside the gate (<share>%)
+<scope> · {window_dates} · {gate_slot} · <gap> Critical outside the gate (<share>%)
 ■ ACT TODAY
 ■ {moved_heading}
 ■ CAN I TRUST THIS
@@ -145,7 +177,7 @@ Copy the four headings character for character, `■` included: no `#`, no bold,
 
 Write the report in English, unless the user wrote to you in another language, in which case write every line of it in that language and still copy the four headings exactly.
 
-**The headline** is one line and never wraps. Name the scope -- the product, the product group, or the estate. Take the date from `last_calculated`. The failing count is `secobserve_list("products", filters={{"security_gate_passed": false}}, page_size=1, fields=["id"])` and the product total is the same call without that filter; `security_gate_passed` is nullable, so a product with no gate configured is counted by neither, and passing is never the total minus the failing. The gap is the subtraction above.
+**The headline** is one line and never wraps. Name the scope -- the product, the product group, or the estate -- and say which of the three it is, because "Portal" alone reads as a product to anyone who does not already know it is a group. Take the date from `last_calculated`. {gate_spec} The gap is the subtraction above.
 
 **■ ACT TODAY** is at most three lines, each one `- <what to do> [day N]`, and an em dash when there is nothing to do.
 Each line names the remediation, not the machinery that found it: twelve secrets a rule raised to Critical are "rotate 12 secrets in api-gateway-mngt", never a note about the rule engine.
@@ -157,7 +189,7 @@ When a fourth candidate qualifies, end the third line with how many were left ou
 The first is `Critical <n> (<signed delta>) · High <n> (<signed delta>)`, the values from `secobserve_product_metrics(kind="current")` and the deltas from `kind="delta"`. Medium, Low and Unknown do not appear: no decision has ever turned on them.
 The second names the single product and branch that worsened most {moved} with its count of new Critical, or is an em dash when nothing worsened.
 
-**■ CAN I TRUST THIS** is at most two lines, and an em dash when both are normal: one line for silent products when there are any, one line when `last_calculated` is not today saying the standing numbers are not today's. Nothing else belongs here. This is the section that says whether the other three can be believed, not a place for caveats in general.
+**■ CAN I TRUST THIS** is at most three lines, and an em dash when all three are normal: one line for silent products when there are any, one line when `last_calculated` is not today saying the standing numbers are not today's, and one line when the change feed came back empty saying nothing changed, which is not the same as nothing was scanned. That last line has no home anywhere else in this report, so an empty feed with this section left at an em dash is a run that quietly reported calm. Nothing else belongs here. This is the section that says whether the other three can be believed, not a place for caveats in general.
 
 **■ DEBT** is exactly three lines, the same three every run, in this order. They move on a weekly scale, so never expand them on a daily run and never add a fourth.
 Active Critical and High across every branch with the share that has a fix: `total` on `filters={{"current_severity": ["Critical", "High"], "current_status": ["Open", "Affected", "In review"]}}`, then the same call plus `"fix_available": true`. `fix_available` is nullable -- true, false, or not known -- so never read a missing value as "no fix available"; that share is a floor and the line has to read as one.
@@ -182,6 +214,8 @@ Then report, grouped by product: how many findings are new, how many the parser 
 Name every new Critical and High finding individually with its component and branch; give the rest as counts.
 Assessments still in `Needs approval` have not taken effect: count them with `filters={{"assessment_status": "Needs approval"}}`, and name them only when there is a handful.
 Name the products that produced no log lines at all.
+
+{_links()}
 {notes}
 {UNTRUSTED}"""
 
@@ -193,21 +227,25 @@ def _standing_report(
     moved: str,
     moved_heading: str,
     window_dates: str,
+    delta_since: str,
     notes: str = "",
 ) -> str:
+    gate_slot, gate_spec = _gate(product)
     return f"""Produce the SecObserve report for {window}, in the fixed shape below and in no other shape. What varies between runs is the numbers, never the sections, their order or their headings.
 
 {_scope(product)}
 
-{_skeleton(moved_heading, window_dates, moved)}
+{_skeleton(moved_heading, window_dates, moved, gate_slot, gate_spec)}
 
 {GATE_GAP}
 
 {METRICS}
 
-{DELTAS}
+{_deltas(delta_since)}
 
 {SILENT_PRODUCTS}
+
+{_links()}
 
 Size the window with `secobserve_list("observation_logs", filters={{"age": "{bucket}"}}, page_size=1, fields=["id"])` before reading any of it, and add `"product": <id>` to every call when the scope is one product.
 
@@ -283,7 +321,9 @@ def weekly_changes(product: ProductArg = None) -> str:
     description="A fixed four-section brief: what to act on, what moved today, what to distrust, and the debt.",
 )
 def daily_report(product: ProductArg = None) -> str:
-    return _standing_report(product, "Today", "today", "today", "CHANGED TODAY", "<today's date>")
+    return _standing_report(
+        product, "Today", "today", "today", "CHANGED TODAY", "<today's date>", "yesterday, one day before today"
+    )
 
 
 @mcp.prompt(
@@ -302,6 +342,7 @@ The headline and the debt are taken at different times from the movement: they a
         "over the past 7 days",
         "CHANGED THIS WEEK",
         "<first date> to <last date>",
+        "the day 7 days before today",
         notes,
     )
 
@@ -347,6 +388,8 @@ The movement cannot be pinned to the month. `observation_logs` takes only a buck
 {PRODUCT_TABLE}
 
 Open the report by naming the exact dates every number was taken from. A 30-day rolling window presented as a calendar month is a wrong answer, however close it looks.
+
+{_links()}
 
 {OVERDUE}
 
