@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 import httpx
 import respx
@@ -11,7 +12,8 @@ from secobserve_mcp.app import mcp
 
 API = "http://secobserve.test/api"
 ZEROS = {"active_critical": 0, "active_high": 0, "open": 0, "risk_accepted": 0}
-JUST_NOW = {"last_calculated": "2026-09-21T10:00:00+00:00", "calculation_interval": 5}
+# Computed, not literal: a fixed "now" turns stale days later and silently tests the other branch.
+JUST_NOW = {"last_calculated": datetime.now(UTC).isoformat(), "calculation_interval": 5}
 
 
 def _mock_current_and_status(timeline: dict[str, object]) -> respx.Route:
