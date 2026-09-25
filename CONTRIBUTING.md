@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for looking. This is a community project and not affiliated with MaibornWolff, who make [SecObserve](https://github.com/MaibornWolff/SecObserve).
+Thanks for looking. This is a community project and not affiliated with MaibornWolff, who make [SecObserve](https://github.com/SecObserve/SecObserve).
 
 This file is for people. [AGENTS.md](AGENTS.md) is written for AI agents working in this repository — it carries the invariants they must not break and the process they follow. Read it if you are curious about why the code is shaped the way it is; you do not need it to contribute.
 

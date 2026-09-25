@@ -16,7 +16,7 @@ Only the latest release gets fixes. A published PyPI version is permanent and ca
 
 In scope: this server. Credential handling, the read-only and delete guards, upload and export confinement, and anything that makes it write to SecObserve or to the filesystem without the caller asking for it.
 
-Out of scope: SecObserve itself. This repository is an API client, so a finding in the backend, its permission model or its scanners belongs upstream at [MaibornWolff/SecObserve](https://github.com/MaibornWolff/SecObserve).
+Out of scope: SecObserve itself. This repository is an API client, so a finding in the backend, its permission model or its scanners belongs upstream at [SecObserve/SecObserve](https://github.com/SecObserve/SecObserve).
 
 ## Trust model
 
