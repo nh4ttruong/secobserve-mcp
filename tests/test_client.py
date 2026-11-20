@@ -109,3 +109,36 @@ async def test_missing_credentials_raise_a_config_error(monkeypatch: pytest.Monk
 
     with pytest.raises(config.ConfigError, match="create_user_api_token"):
         _ = config.get_config().auth_header
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/vex/csaf_document/update/../../products/12/observations_bulk_delete/#/",
+        "/purl_types/../../../other-app/",
+        "/purl_types/maven?product=1/",
+        "/purl_types/%2e%2e/",
+        "/purl_types//evil.test/",
+        "/purl_types/a\\b/",
+    ],
+)
+async def test_a_path_that_could_leave_its_endpoint_is_refused_before_sending(path: str) -> None:
+    # No route is mocked, so any request that goes out fails the test with a different error.
+    with pytest.raises(ValueError, match="path segment"):
+        await request("POST", path, json_body={})
+
+
+@respx.mock
+async def test_vex_document_ids_cannot_retarget_the_request() -> None:
+    from secobserve_mcp.tools_workflows import secobserve_vex_document
+
+    result = await secobserve_vex_document(
+        format="csaf",
+        document_id_prefix="..",
+        document_base_id="../../products/12/observations_bulk_delete/#",
+        fields={"observations": [1]},
+    )
+
+    assert result.startswith("Error:") and "path segment" in result
+    assert not respx.calls

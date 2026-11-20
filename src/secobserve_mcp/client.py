@@ -10,12 +10,17 @@ from __future__ import annotations
 
 import functools
 import json
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
 
 from .config import CREDENTIAL_HEADER, ConfigError, get_config, request_auth_header
+
+# httpx resolves dot segments and drops a fragment, so any of these lets a caller-supplied id move the request to
+# another endpoint, or out of /api with the credential attached.
+_UNSAFE_PATH = re.compile(r"[?#%\\]|//|(^|/)\.{1,2}(/|$)")
 
 _client: httpx.AsyncClient | None = None
 
@@ -148,8 +153,14 @@ async def request(
     Raises:
         SecObserveError: on any non-2xx response, timeout or transport failure.
         ReadOnlyError: when a mutating verb is used in read-only mode.
+        ValueError: when the path holds a segment that would retarget the request.
         ConfigError: when no credentials are configured, or the request carried one this server cannot read.
     """
+    if _UNSAFE_PATH.search(path):
+        raise ValueError(
+            f"Refusing {path!r}: a path segment contains '.', '..', '//', '?', '#', '%' or a backslash, which would "
+            "send the request to a different endpoint. Pass ids and names exactly as SecObserve shows them."
+        )
     config = get_config()
     if method.upper() != "GET" and config.read_only:
         raise ReadOnlyError(
