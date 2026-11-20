@@ -24,7 +24,7 @@ from .formatting import ResponseFormat, missing_fields, paging_envelope, project
 from .registry import CREATE, DELETE, GET, LIST, RESOURCES, UPDATE, Resource, get_resource
 
 MAX_PAGE_SIZE = 100
-NAME_CONFIRMED_DELETES = {"products", "product_groups"}
+NAME_CONFIRMED_DELETES = {"products", "product_groups", "scancodeio_projects"}
 
 
 #: Repeated verbatim on six tools; the wording is the same, so the alias is too.
@@ -699,8 +699,9 @@ async def secobserve_delete(
         str | None,
         Field(
             description=(
-                "Required for 'products' and 'product_groups': the record's exact name, case- and "
-                "whitespace-sensitive. The API rejects a mismatch, which is what makes the delete deliberate."
+                "Required for 'products', 'product_groups' and 'scancodeio_projects' (its project_name): the "
+                "record's exact name, case- and whitespace-sensitive. The API rejects a mismatch, which is what "
+                "makes the delete deliberate."
             ),
             max_length=255,
         ),
@@ -710,15 +711,15 @@ async def secobserve_delete(
 
     Deleting a product removes its branches, observations, license components,
     metrics history and VEX documents; deleting a product group removes its child
-    products too. Those two therefore require confirm_name to match the record's
-    exact name, and the whole tool is disabled unless SECOBSERVE_ALLOW_DELETE is
-    set on the server.
+    products too; deleting a ScanCode.io project deletes it on ScanCode.io as well.
+    Those three therefore require confirm_name to match the record's exact name,
+    and the whole tool is disabled unless SECOBSERVE_ALLOW_DELETE is set on the server.
 
     Args:
         resource (str): Resource name supporting delete.
         id (int): Primary key of the record.
-        confirm_name (Optional[str]): Exact name; required for products and
-          product_groups, case- and whitespace-sensitive.
+        confirm_name (Optional[str]): Exact name; required for products,
+          product_groups and scancodeio_projects, case- and whitespace-sensitive.
 
     Returns:
         str: A one-line confirmation naming what was deleted.
@@ -732,8 +733,8 @@ async def secobserve_delete(
 
     Error Handling:
         Refused when SECOBSERVE_ALLOW_DELETE is unset, when the resource has no
-        delete operation, or when confirm_name is missing for a product or product
-        group. A 409 means something still references the record.
+        delete operation, or when confirm_name is missing for a product, product
+        group or ScanCode.io project. A 409 means something still references the record.
     """
     _require_deletes_enabled()
     resource_def = get_resource(resource)

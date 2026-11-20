@@ -77,6 +77,18 @@ async def test_list_projects_away_the_bulk_of_each_row() -> None:
 
 
 @respx.mock
+async def test_a_branch_lists_its_own_security_gate_by_default() -> None:
+    branch = {"id": 3, "name": "release-2", "product": 12, "is_default_branch": False, "security_gate_passed": False}
+    respx.get(f"{API}/branches/").mock(
+        return_value=httpx.Response(200, json={"count": 1, "next": None, "results": [branch | {"purl": "pkg:x"}]})
+    )
+
+    payload = json.loads(await secobserve_list(resource="branches", response_format=ResponseFormat.JSON))
+
+    assert payload["items"][0]["security_gate_passed"] is False
+
+
+@respx.mock
 async def test_list_star_fields_returns_everything() -> None:
     respx.get(f"{API}/observations/").mock(
         return_value=httpx.Response(200, json={"count": 1, "next": None, "results": [FAT_OBSERVATION]})
@@ -398,22 +410,24 @@ async def test_delete_is_off_until_explicitly_enabled() -> None:
     assert "SECOBSERVE_ALLOW_DELETE" in result
 
 
-async def test_product_delete_demands_the_exact_name(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("resource", ["products", "scancodeio_projects"])
+async def test_a_name_confirmed_delete_demands_the_exact_name(resource: str, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(config.ENV_ALLOW_DELETE, "true")
     config.get_config.cache_clear()
 
-    result = await secobserve_delete(resource="products", id=12)
+    result = await secobserve_delete(resource=resource, id=12)
 
     assert "confirm_name" in result
 
 
 @respx.mock
-async def test_product_delete_passes_the_name_through(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("resource", ["products", "scancodeio_projects"])
+async def test_a_name_confirmed_delete_passes_the_name_through(resource: str, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(config.ENV_ALLOW_DELETE, "true")
     config.get_config.cache_clear()
-    route = respx.delete(f"{API}/products/12/").mock(return_value=httpx.Response(204))
+    route = respx.delete(f"{API}/{resource}/12/").mock(return_value=httpx.Response(204))
 
-    await secobserve_delete(resource="products", id=12, confirm_name="Portal")
+    await secobserve_delete(resource=resource, id=12, confirm_name="Portal")
 
     assert route.calls.last.request.url.params["name"] == "Portal"
 

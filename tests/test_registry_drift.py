@@ -36,10 +36,12 @@ IGNORED_PATHS: dict[str, str] = {
     "/api/metrics/product_metrics_current/": "secobserve_product_metrics; a zero here can mean 'not calculated'",
     "/api/metrics/product_metrics_status/": "secobserve_product_metrics; the guard against quoting that zero",
     "/api/metrics/product_metrics_timeline/": "secobserve_product_metrics; its age buckets are not Age_Choices",
+    "/api/products/{product_id}/create_scancodeio_project/": "multipart only; call_action cannot send it, use the UI",
     "/api/products/{product_id}/scan_osv/": "secobserve_trigger_scan; a timeout does not cancel the scan",
     "/api/products/{product_id}/scan_vulnerablecode/": "secobserve_trigger_scan; a timeout does not cancel the scan",
     "/api/products/{product_id}/{branch_id}/scan_osv/": "secobserve_trigger_scan, branch-scoped",
     "/api/products/{product_id}/{branch_id}/scan_vulnerablecode/": "secobserve_trigger_scan, branch-scoped",
+    "/api/scancodeio/webhook/{token}/": "inbound callback from ScanCode.io, authenticated by the token in its URL",
     "/api/vex/csaf_document/create/": "secobserve_vex_document; the body has required fields a path cannot express",
     "/api/vex/csaf_document/update/{document_id_prefix}/{document_base_id}/": "secobserve_vex_document, update branch",
     "/api/vex/cyclonedx_document/create/": "secobserve_vex_document; required fields a path cannot express",
@@ -74,10 +76,12 @@ def _registered_paths() -> set[str]:
 
 
 def test_every_collection_endpoint_is_a_registry_resource() -> None:
-    """drf-spectacular names a DRF list operation `<basename>_list`, which is exactly the shape a Resource wraps."""
+    """drf-spectacular names a DRF list operation `<basename>_list`, which is exactly the shape a Resource wraps.
+
+    A view or action answering a bare list (`many=True`, unpaginated) gets the same suffix; call_action renders those.
+    """
     collections = {path for path, ops in PATHS.items() if ops.get("get", "").endswith("_list")}
-    registered = {f"/api{resource.path}" for resource in RESOURCES.values()}
-    missing = sorted(collections - registered - set(IGNORED_PATHS))
+    missing = sorted(collections - _registered_paths() - set(IGNORED_PATHS))
     assert not missing, (
         f"SecObserve {VERSION} serves collections registry.py does not carry: {missing}. "
         "Add a Resource with a summary and list_fields, or add the path to IGNORED_PATHS with its reason."

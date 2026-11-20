@@ -134,7 +134,7 @@ This is the most important invariant in the repository.
 ## Write and delete safety invariants
 
 - `secobserve_delete`, and any `secobserve_call_action` that uses DELETE or whose action name contains `delete`, are disabled unless `SECOBSERVE_ALLOW_DELETE` is set. Deletion in SecObserve cascades and cannot be undone.
-- Deleting `products` / `product_groups` additionally requires `confirm_name` to match the record's exact name, passed to the API as a `name` query parameter; the API itself verifies it.
+- Deleting `products` / `product_groups` / `scancodeio_projects` additionally requires `confirm_name` to match the record's exact name (a ScanCode.io project's `project_name`), passed to the API as a `name` query parameter; the API itself verifies it.
 - `SECOBSERVE_READ_ONLY` is enforced in `client.request`, before any request is made, so it does not depend on each tool remembering to check.
 - Uploads may only read files under `SECOBSERVE_IMPORT_DIR` (resolve, then compare `parents`). The reason is prompt injection: scan reports are third-party data, and without confinement an instruction planted in a report could talk an agent into uploading an unrelated local file to SecObserve.
 - Exports are written to `SECOBSERVE_EXPORT_DIR` under a basename sanitised to a single segment. A caller can never supply a path.

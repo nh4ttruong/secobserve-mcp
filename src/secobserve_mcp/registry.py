@@ -152,6 +152,13 @@ RESOURCES: dict[str, Resource] = {
         list_fields=PRODUCT_LIST_FIELDS,
         actions=(
             Action("apply_rules", "POST", True, "Re-apply all rules to the product's observations."),
+            Action(
+                "security_gate_counts",
+                "GET",
+                True,
+                "Why the security gate passes or fails: per severity and priority, the default branch's active count, "
+                "its threshold and whether it passes. Empty for a product group or when no gate applies.",
+            ),
             Action("observations_bulk_assessment", "POST", True, "Assess many observations of this product."),
             Action("observations_bulk_mark_duplicates", "POST", True, "Mark listed observations as duplicates."),
             Action("observations_bulk_delete", "POST", True, "Delete listed observations of this product."),
@@ -199,7 +206,15 @@ RESOURCES: dict[str, Resource] = {
         path="/branches/",
         ops=CRUD,
         summary="Branches or versions of a product; observations are scoped to one.",
-        list_fields=("id", "name", "product", "is_default_branch", "last_import", "housekeeping_protect"),
+        list_fields=(
+            "id",
+            "name",
+            "product",
+            "is_default_branch",
+            "security_gate_passed",
+            "last_import",
+            "housekeeping_protect",
+        ),
     ),
     "branch_names": Resource(
         path="/branch_names/",
@@ -307,6 +322,10 @@ RESOURCES: dict[str, Resource] = {
         summary="Software components seen in SBOMs and scans.",
         list_fields=("id", "name_version", "purl", "cpe"),
         label="name_version",
+        actions=(
+            Action("export_excel", "GET", False, "Filtered components as XLSX.", binary=True),
+            Action("export_csv", "GET", False, "Filtered components as CSV.", binary=True),
+        ),
     ),
     "component_names": Resource(
         path="/component_names/",
@@ -479,6 +498,32 @@ RESOURCES: dict[str, Resource] = {
         summary="Authorization groups that may manage a license policy.",
         list_fields=("id", "license_policy", "authorization_group", "is_manager"),
         label="id",
+    ),
+    # --- ScanCode.io ---------------------------------------------------------
+    "scancodeio_projects": Resource(
+        path="/scancodeio_projects/",
+        ops=READ_DELETE,
+        summary="ScanCode.io projects scanning a product, branch or service for license components. 403 unless the "
+        "ScanCode.io integration is enabled. Deleting one needs confirm_name set to its project_name and deletes the "
+        "project on ScanCode.io too.",
+        list_fields=("id", "project_name", "product", "branch_name", "service_name", "created"),
+        label="project_name",
+        actions=(
+            Action("details", "GET", True, "Live state read from ScanCode.io: input sources, pipeline runs, counts."),
+            Action(
+                "import_results",
+                "POST",
+                True,
+                "Import the project's ScanCode.io results now, as its webhook does: license components missing from "
+                "the results are deleted. Returns new/updated/deleted counts; needs license management enabled.",
+            ),
+        ),
+    ),
+    "scancodeio": Resource(
+        path="/scancodeio/",
+        ops=frozenset(),
+        summary="ScanCode.io server lookups; the projects themselves are scancodeio_projects.",
+        actions=(Action("pipelines", "GET", False, "Pipelines the ScanCode.io server offers, with a summary each."),),
     ),
     # --- notifications ------------------------------------------------------
     "notifications": Resource(
