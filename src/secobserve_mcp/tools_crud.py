@@ -66,35 +66,69 @@ def _resolve_fields(resource: Resource, requested: list[str] | None) -> tuple[tu
     return resource.list_fields, note
 
 
-async def _validate_filters(resource_name: str, resource: Resource, filters: dict[str, Any] | None) -> None:
-    """Fail loudly on a filter the endpoint would silently mishandle.
+async def _validate_filters(
+    resource_name: str,
+    resource: Resource,
+    filters: dict[str, Any] | None,
+    search: str | None = None,
+    ordering: str | None = None,
+) -> None:
+    """Fail loudly on a filter, search or ordering the endpoint would silently mishandle.
 
     django-filter drops unrecognised query parameters silently, so a misspelled or
     invented filter returns the full unfiltered list -- which an agent would report
     as a confident, wrong answer. It is just as silent about several values on a
-    filter that takes one: the last value wins and the rest are dropped. Checking
-    against the live schema turns both into an error naming the filter.
+    filter that takes one: the last value wins and the rest are dropped. DRF ignores
+    search and ordering on an endpoint without a SearchFilter or an OrderingFilter.
+    Checking against the live schema turns all of these into an error naming the parameter.
     """
-    if not filters:
+    empty = sorted(name for name, value in (filters or {}).items() if value in (None, "", []))
+    if empty:
+        raise SecObserveError(
+            f"{', '.join(empty)} on '{resource_name}' {'has' if len(empty) == 1 else 'have'} no value, so the API "
+            f"would apply no filter and return unfiltered results. Omit it, or give it a value."
+        )
+    if not (filters or search or ordering):
         return
     accepted = await schema_reader.query_parameters(resource.path)
     if not accepted:
         return
+    filter_names = ", ".join(sorted(set(accepted) - {"page", "page_size", "ordering", "search"}))
 
-    unknown = sorted(set(filters) - set(accepted))
+    unknown = sorted(set(filters or {}) - set(accepted))
     if unknown:
         raise SecObserveError(
             f"{', '.join(unknown)} {'is not a filter' if len(unknown) == 1 else 'are not filters'} "
             f"of '{resource_name}', and the API would ignore it and return unfiltered results. "
-            f"Accepted filters: {', '.join(sorted(set(accepted) - {'page', 'page_size', 'ordering', 'search'}))}."
+            f"Accepted filters: {filter_names}."
+        )
+
+    if search and "search" not in accepted:
+        raise SecObserveError(
+            f"'{resource_name}' has no search, and the API would ignore search and return unfiltered results. "
+            f"Narrow it with filters instead: {filter_names}."
+        )
+    if ordering and "ordering" not in accepted:
+        raise SecObserveError(
+            f"'{resource_name}' has no ordering, and the API would ignore it and return its default order. "
+            f"Omit ordering and do not read the first row as the smallest or largest."
+        )
+    choices = accepted.get("ordering", {}).get("enum") or []
+    invalid = sorted(set(ordering.split(",")) - set(choices)) if ordering and choices else []
+    if invalid:
+        raise SecObserveError(
+            f"Not an ordering of '{resource_name}': {', '.join(invalid)}. "
+            f"Accepted, comma-separated to combine: {', '.join(sorted(choices))}."
         )
 
     # Only a type the schema states positively is worth rejecting on: an under-specified
     # parameter is passed through, exactly as an unreadable schema is.
     single_valued = sorted(
         name
-        for name, value in filters.items()
-        if isinstance(value, (list, tuple, set)) and len(value) > 1 and accepted[name] not in (None, "array")
+        for name, value in (filters or {}).items()
+        if isinstance(value, (list, tuple, set))
+        and len(value) > 1
+        and accepted[name].get("type") not in (None, "array")
     )
     if single_valued:
         raise SecObserveError(
@@ -379,12 +413,15 @@ async def secobserve_list(
         Unknown resource -> error listing the closest valid names.
         Unknown filter -> refused before the request, listing the filters that exist.
         List on a single-valued filter -> refused; call once per value instead.
+        Filter set to None, [] or "" -> refused; omit it or give it a value.
+        search or ordering the endpoint does not take, or an ordering outside
+        its choices -> refused before the request, naming what it accepts.
         Read-only mode does not affect this tool.
     """
     resource_def = get_resource(resource)
     _require_op(resource, resource_def, LIST)
 
-    await _validate_filters(resource, resource_def, filters)
+    await _validate_filters(resource, resource_def, filters, search, ordering)
 
     query: dict[str, Any] = dict(filters or {})
     query["page"] = page

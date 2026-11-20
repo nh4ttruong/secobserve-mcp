@@ -30,6 +30,17 @@ SCHEMA = {
                         "schema": {"type": "array", "items": {"enum": ["Critical", "High"]}},
                     },
                     {"name": "product", "in": "query", "required": True, "schema": {"type": "integer"}},
+                    {"name": "search", "in": "query", "schema": {"type": "string"}},
+                    # django-filter's OrderingFilter: a CSV array whose enum carries both directions.
+                    {
+                        "name": "ordering",
+                        "in": "query",
+                        "explode": False,
+                        "schema": {
+                            "type": "array",
+                            "items": {"type": "string", "enum": ["-created", "-title", "created", "title"]},
+                        },
+                    },
                 ],
                 "responses": {
                     "200": {
@@ -265,3 +276,84 @@ async def test_a_list_passes_when_the_schema_is_unavailable() -> None:
     await secobserve_list(resource="observation_logs", filters={"severity": ["Critical", "High"]})
 
     assert listing.called
+
+
+def empty_listing(path: str) -> respx.Route:
+    return respx.get(f"{API}{path}").mock(return_value=httpx.Response(200, json={"count": 0, "results": []}))
+
+
+@respx.mock
+async def test_search_is_rejected_where_the_endpoint_has_no_search() -> None:
+    """DRF ignores search without a SearchFilter, so the whole list and its total would come back."""
+    schema._schema = None
+    respx.get(f"{API}/oa3/schema/").mock(return_value=httpx.Response(200, json=SCHEMA))
+    listing = empty_listing("/observation_logs/")
+
+    result = await secobserve_list(resource="observation_logs", search="log4j")
+
+    assert "no search" in result
+    assert "severity" in result, "the error must name the filters to use instead"
+    assert not listing.called
+
+
+@respx.mock
+async def test_ordering_is_rejected_where_the_endpoint_has_no_ordering() -> None:
+    schema._schema = None
+    respx.get(f"{API}/oa3/schema/").mock(return_value=httpx.Response(200, json=SCHEMA))
+    listing = empty_listing("/observation_logs/")
+
+    result = await secobserve_list(resource="observation_logs", ordering="created", page_size=1)
+
+    assert "no ordering" in result
+    assert not listing.called
+
+
+@respx.mock
+async def test_ordering_outside_the_schema_enum_is_rejected() -> None:
+    """ordering='created', page_size=1 means 'the oldest row'; a wrong field would give a confident wrong row."""
+    schema._schema = None
+    respx.get(f"{API}/oa3/schema/").mock(return_value=httpx.Response(200, json=SCHEMA))
+    listing = empty_listing("/observations/")
+
+    result = await secobserve_list(resource="observations", ordering="title,-severity")
+
+    assert "-severity" in result
+    assert "-created" in result, "the error must list the accepted orderings"
+    assert not listing.called
+
+
+@respx.mock
+async def test_search_and_ordering_the_endpoint_supports_pass_through() -> None:
+    schema._schema = None
+    respx.get(f"{API}/oa3/schema/").mock(return_value=httpx.Response(200, json=SCHEMA))
+    listing = empty_listing("/observations/")
+
+    await secobserve_list(resource="observations", search="log4j", ordering="title,-created")
+
+    sent = listing.calls.last.request.url.params
+    assert sent["search"] == "log4j" and sent["ordering"] == "title,-created"
+
+
+@respx.mock
+async def test_search_and_ordering_pass_when_the_schema_is_unavailable() -> None:
+    schema._schema = None
+    respx.get(f"{API}/oa3/schema/").mock(return_value=httpx.Response(503))
+    listing = empty_listing("/observation_logs/")
+
+    await secobserve_list(resource="observation_logs", search="log4j", ordering="anything")
+
+    assert listing.called
+
+
+@pytest.mark.parametrize("value", [None, [], ""])
+@respx.mock
+async def test_an_empty_filter_value_is_rejected(value: object) -> None:
+    """None is dropped by the client, [] encodes to nothing and django-filter skips '': all three mean no filter."""
+    schema._schema = None
+    respx.get(f"{API}/oa3/schema/").mock(return_value=httpx.Response(200, json=SCHEMA))
+    listing = empty_listing("/observations/")
+
+    result = await secobserve_list(resource="observations", filters={"product": 12, "current_severity": value})
+
+    assert "current_severity" in result and "Omit it" in result
+    assert not listing.called
