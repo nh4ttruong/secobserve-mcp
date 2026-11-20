@@ -406,25 +406,14 @@ _STALE_MINIMUM = timedelta(minutes=30)
 def _metrics_staleness(status: Any) -> dict[str, Any] | None:
     """None when the metrics job ran recently, otherwise a block saying why the counts are not a measurement.
 
-    Elapsed time, plus the date in the timestamp's own offset: the backend serialises it in its TIME_ZONE, the zone it
-    picks the day's rows in, while this host's zone says nothing about the backend's day.
+    Elapsed time, not calendar dates: the backend decides which day the counts come from in its own TIME_ZONE, so a
+    host in another zone would keep reporting the numbers as current for as many hours as it runs ahead.
     """
     last_calculated = status.get("last_calculated") if isinstance(status, dict) else None
     interval = _calculation_interval(status)
     elapsed = _elapsed_since(last_calculated)
     if elapsed is not None and elapsed <= max(_STALE_AFTER_RUNS * interval, _STALE_MINIMUM):
-        if not _backend_day_changed_since(last_calculated):
-            return None
-        return {
-            "last_calculated": last_calculated,
-            "warning": (
-                "SecObserve's day changed after the metrics job last finished, and the job writes today's rows "
-                "product by product before it records a finished run. Until the next run finishes, every count below "
-                "is a partial sum or a zero the backend filled in, not a measurement. Do not quote these numbers. "
-                f"Wait for the next run (every {int(interval.total_seconds() // 60)} minutes), or count the rows "
-                "themselves with secobserve_list."
-            ),
-        }
+        return None
     if elapsed is not None:
         when = f"{_format_elapsed(elapsed)} ago"
     elif last_calculated is None:
@@ -443,12 +432,13 @@ def _metrics_staleness(status: Any) -> dict[str, Any] | None:
     }
 
 
-async def _never_calculated(product_id: int | None) -> dict[str, Any] | None:
-    """A block when the job has never run, which `last_calculated` cannot tell you.
+async def _unmeasured_zeros(product_id: int | None) -> dict[str, Any] | None:
+    """A block when all-zero counts are not a measurement, which `last_calculated` cannot tell you.
 
     Product_Metrics_Status is a get_or_create singleton whose last_calculated defaults to now, so the first read on
-    an instance that never calculated creates the row and reports that it just did. An empty timeline is the only
-    thing that separates "never ran" from "ran and everything really is zero".
+    an instance that never calculated creates the row and reports that it just did; its timeline is empty. After the
+    backend's midnight `current` sums a day nobody has written rows for yet, while the newest timeline day still has
+    counts. Only a newest day of zeros means everything really is zero.
     """
     # A week, not the full history: this runs only when the timestamp looks fresh, so nothing in the last seven
     # days means nothing is being written, and the unbounded read would be one entry per retained day.
@@ -456,7 +446,19 @@ async def _never_calculated(product_id: int | None) -> dict[str, Any] | None:
         "GET", "/metrics/product_metrics_timeline/", params={"product_id": product_id, "age": MetricsAge.WEEK.value}
     )
     if isinstance(timeline, dict) and timeline:
-        return None
+        newest = max(timeline)
+        if _all_counters_zero(timeline[newest]):
+            return None
+        return {
+            "last_calculated": None,
+            "warning": (
+                f"Every count below is zero, yet the newest day in the metrics timeline ({newest}) has counts: "
+                "SecObserve's day has started and the metrics job has not written its rows yet. These zeros are not "
+                "a measurement. Do not quote these numbers. Wait for the job's next run, or run "
+                "secobserve_run_periodic_task(task='calculate_product_metrics'), or count the rows themselves with "
+                "secobserve_list."
+            ),
+        }
     return {
         "last_calculated": None,
         "warning": (
@@ -497,15 +499,6 @@ def _elapsed_since(timestamp: Any) -> timedelta | None:
     except ValueError:
         return None
     return datetime.now(UTC) - (parsed if parsed.tzinfo else parsed.astimezone())
-
-
-def _backend_day_changed_since(timestamp: Any) -> bool:
-    """Whether today, in the offset the timestamp carries, is a later date than the timestamp's own."""
-    try:
-        parsed = datetime.fromisoformat(timestamp)
-    except (TypeError, ValueError):
-        return False
-    return parsed.tzinfo is not None and datetime.now(parsed.tzinfo).date() > parsed.date()
 
 
 def _format_elapsed(elapsed: timedelta) -> str:
@@ -700,7 +693,7 @@ async def secobserve_product_metrics(
         payload = await request("GET", "/metrics/product_metrics_current/", params={"product_id": product_id})
         stale = _metrics_staleness(await request("GET", "/metrics/product_metrics_status/"))
         if stale is None and _all_counters_zero(payload):
-            stale = await _never_calculated(product_id)
+            stale = await _unmeasured_zeros(product_id)
         if stale and isinstance(payload, dict):
             payload["stale"] = stale
     else:

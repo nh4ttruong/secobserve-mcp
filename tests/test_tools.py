@@ -668,17 +668,14 @@ async def test_staleness_is_measured_in_elapsed_time_not_calendar_days(
 
 
 @respx.mock
-async def test_current_metrics_are_flagged_after_the_backends_midnight_until_a_run_finishes() -> None:
-    """Today's rows are written product by product and last_calculated only at the end, so the counts are partial."""
+async def test_a_recent_run_is_fresh_whatever_date_its_timestamp_shows() -> None:
+    """last_calculated is serialised in UTC, not the backend's TIME_ZONE, so its date says nothing about the backend's day."""
     respx.get(f"{API}/metrics/product_metrics_current/").mock(return_value=httpx.Response(200, json=CURRENT_METRICS))
-    before_midnight = datetime.now(zone_at(0, 5)) - timedelta(minutes=12)
-    metrics_status_route(before_midnight, 5)
+    metrics_status_route(datetime.now(zone_at(0, 5)) - timedelta(minutes=12), 5)
 
     payload = json.loads(await call("secobserve_product_metrics", kind="current"))
 
-    assert payload["stale"]["last_calculated"] == before_midnight.isoformat()
-    assert "day changed" in payload["stale"]["warning"]
-    assert "not a measurement" in payload["stale"]["warning"]
+    assert "stale" not in payload
 
 
 @respx.mock
