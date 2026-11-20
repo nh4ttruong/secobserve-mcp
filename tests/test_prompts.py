@@ -119,16 +119,33 @@ async def test_metrics_prompts_keep_the_staleness_and_default_branch_caveats(nam
     assert "`stale` block" in text
     assert "do not reason from `last_calculated` on your own" in text
     assert "reports that it just ran" in text
-    assert "fifteen counts at `0`" in text
+    # Since 1.61 a day without rows falls back to each product's newest row instead of answering zeros.
+    assert "sums each product's newest row" in text
+    assert "fifteen counts at `0`" not in text
     assert "default branch only" in text
     assert "never for a product group" in text
 
 
-async def test_monthly_report_refuses_to_call_a_rolling_window_a_month() -> None:
+async def test_monthly_report_pins_the_change_feed_to_the_calendar_month() -> None:
+    """Since 1.61 `observation_logs` filter on a `created` range, so a rolling 30 days no longer stands in for a month."""
     text = _text(await mcp.get_prompt("monthly-report", {"month": "2026-08"}))
-    assert "A calendar month is not expressible as a filter." in text
-    assert "label it a 30-day window rather than 2026-08" in text
+    assert '"created_after": "2026-08-01"' in text
+    assert '"created_before": "<last day of 2026-08>T23:59:59.999999"' in text
+    assert "a bare last day drops that whole day" in text
+    assert "not expressible as a filter" not in text
+    assert '"age": "Past 30 days"' not in text
     assert "naming the exact dates every number was taken from" in text
+
+    group = _text(await mcp.get_prompt("monthly-report", {"month": "2026-08", "product_group": "Platform"}))
+    assert "`product_group` filter on every `secobserve_list` call" in group
+
+
+@pytest.mark.parametrize("name", ("daily-changes", "weekly-changes", "daily-report", "weekly-report", "monthly-report"))
+async def test_no_prompt_says_the_date_range_filters_are_missing(name: str) -> None:
+    arguments = {"month": "2026-08"} if name == "monthly-report" else {}
+    text = _text(await mcp.get_prompt(name, arguments))
+    assert "no date range filter" not in text
+    assert "neither filterable nor orderable" not in text
 
 
 @pytest.mark.parametrize("name", ("triage-product", "daily-changes", "weekly-changes", "daily-report", "weekly-report"))
@@ -149,6 +166,15 @@ async def test_no_sla_or_due_date_is_invented() -> None:
     text = _text(await mcp.get_prompt("daily-report", {}))
     assert "no due date and no SLA" in text
     assert "this report's own definition" in text
+
+
+@pytest.mark.parametrize("name", REPORT_PROMPTS)
+async def test_backlog_age_comes_from_created_and_never_from_age(name: str) -> None:
+    """`age` filters the last change, so it selects recent findings; `created_before` is the one that measures age."""
+    arguments = {"month": "2026-08"} if name == "monthly-report" else {}
+    text = _text(await mcp.get_prompt(name, arguments))
+    assert "`created_before` on `observations`" in text
+    assert "never use it to say how long a finding has been open" in text
 
 
 @pytest.mark.parametrize("name", STANDING_PROMPTS)
@@ -172,14 +198,14 @@ async def test_only_the_movement_heading_differs_between_the_two_standing_report
 
 
 @pytest.mark.parametrize("name", STANDING_PROMPTS)
-async def test_the_gate_gap_is_required_and_both_operands_count_the_same_statuses(name: str) -> None:
-    """Metrics count only the active statuses; an observations side counting anything else is wrong by five figures."""
-    text = _text(await mcp.get_prompt(name, {}))
+async def test_the_headline_no_longer_reports_exposure_outside_the_gate(name: str) -> None:
+    """Since 1.60 every branch has its own `security_gate_passed`, so Critical off the default branch is not ungated."""
+    for arguments in ({}, {"product": "Portal"}):
+        text = _text(await mcp.get_prompt(name, arguments))
 
-    assert "Critical outside the gate" in text
-    assert "counts exactly `Open`, `Affected` and `In review`" in text
-    assert '"current_status": ["Open", "Affected", "In review"]' in text
-    assert 'active_critical` of `secobserve_product_metrics(kind="current")' in text
+        assert "outside the gate" not in text
+        assert "the gate never looks at" not in text
+        assert "security_gate_passed" in text
 
 
 @pytest.mark.parametrize("name", CHANGE_FEED_PROMPTS)
@@ -248,7 +274,7 @@ def _text(result: GetPromptResult | InputRequiredResult) -> str:
 
 
 @pytest.mark.parametrize("name", ("triage-product", "daily-report", "weekly-report"))
-async def test_severity_ordering_is_ascending_because_the_column_sorts_alphabetically(name: str) -> None:
+async def test_severity_ordering_is_ascending_because_the_column_sorts_by_rank(name: str) -> None:
     """Measured live: `-current_severity` returns High before Critical, so descending buries what matters."""
     arguments = {"product": "Portal"} if name == "triage-product" else {}
     text = _text(await mcp.get_prompt(name, arguments))
@@ -277,8 +303,10 @@ async def test_a_product_scoped_report_does_not_count_the_gate_across_the_estate
 
     assert '"security_gate_passed": false' not in scoped
     assert "gate <passing|failing|not configured>" in scoped
-    assert 'secobserve_get("products", <id>, fields=["security_gate_passed", "security_gate_active"])' in scoped
+    assert 'secobserve_get("products", <id>, fields=["security_gate_passed"])' in scoped
     assert "has no `product` and no `id` filter" in scoped
+    # A product's own `security_gate_active` false is overridden by an active product group gate.
+    assert "security_gate_active" not in scoped
 
 
 @pytest.mark.parametrize(
@@ -366,12 +394,12 @@ async def test_quick_report_counts_observations_rather_than_the_precalculated_co
 
 
 async def test_quick_report_does_not_call_its_five_rows_the_worst() -> None:
-    """Severity is the only ordering, so within Critical the five are arbitrary and a superlative is a lie."""
+    """Within Critical the API orders by id, so the five are the oldest recorded and a superlative is a lie."""
     text = _text(await mcp.get_prompt("quick-report", {}))
 
-    assert "the API imposes no ordering you can rely on" in text
+    assert "oldest recorded first" in text
     assert "not the five worst, the five newest or the five most urgent" in text
-    assert "in no particular order" in text
+    assert "oldest first" in text
     assert 'ordering="-current_severity"' not in text
 
 

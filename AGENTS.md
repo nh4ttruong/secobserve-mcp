@@ -80,15 +80,15 @@ When the backend changes its contract, update `registry.py` and the matching tes
 
 ### Metrics
 
-Verified against SecObserve 1.59.2.
+Verified against SecObserve 1.65.0.
 
-- `/metrics/product_metrics_current/` answers **200 with every counter at `0`** when today's rows have not been written; there is no error path, so a zero is indistinguishable from "not calculated". Read `product_metrics_status` before quoting a count. This is the most dangerous behaviour in the whole metrics surface.
-- `last_calculated` is always UTC: the view returns the raw datetime instead of its serializer's output, so its date says nothing about the backend's day, which follows `TIME_ZONE`. After the backend's midnight `current` is all zeros until the first run writes the new day's rows, which the newest timeline day still having counts gives away. While that run is in progress the counts are partial sums next to a recent `last_calculated`, and nothing here can tell.
+- `/metrics/product_metrics_current/` sums each product's **newest row up to today**, so when the job has not run today it answers 200 with an earlier day's counts and nothing says which day; a product with no row at all counts `0`. Read `product_metrics_status` before quoting a count. This is the most dangerous behaviour in the whole metrics surface.
+- `last_calculated` is always UTC: the view returns the raw datetime instead of its serializer's output, so its date says nothing about the backend's day, which follows `TIME_ZONE`. After the backend's midnight `current` is the previous day's rows until the first run writes the new day's, and a run writes in batches, so while it is in progress `current` mixes days and nothing here can tell.
 - An unknown `product_id` is **ignored, not rejected**: `get_product_by_id` returns `None` on `DoesNotExist`, and `None` means the whole instance, so a wrong id answers 200 with instance-wide numbers. The same applies to the timeline and the metrics exports. Resolve the id before presenting any number as one product's.
-- Metrics rows are written for each product's **default branch only**, and never for a product group; a group id sums its products' rows. The per-product `active_*_observation_count` fields on `/products/` are default-branch only too, and are read from today's metrics rows when the instance setting `observation_count_from_metrics` is on, so they fall to zero exactly like metrics.
+- Metrics rows are written for each product's **default branch only**, and never for a product group; a group id sums its products' rows. The per-product `active_*_observation_count` fields on `/products/` are default-branch only too, and are read from each product's newest metrics row when the instance setting `observation_count_from_metrics` is on, so they go stale exactly like metrics.
 - `product_metrics_status` is **not** proof the job has ever run. `Product_Metrics_Status.load()` is a `get_or_create(pk=1)` whose `last_calculated` defaults to `timezone.now`, so the first read on an instance that never calculated creates the row and reports that it just did -- and every later read agrees. It detects a job that died, never one that never started; an empty timeline is what distinguishes those.
 - The timeline's age buckets are `metrics/services/age.py`, **not** `commons/types.py` `Age_Choices`: it has no `Today`, and an unrecognised age silently means the full retained history.
-- The backend has **no due date and no SLA**, anywhere, so nothing can compute "overdue". The `age` filter on `observations` filters `last_observation_log__gte`, i.e. *recently changed* and not *old*, and must never be used to measure how long a finding has been open.
+- The backend has **no due date and no SLA**, anywhere, so nothing can compute "overdue". The `age` filter on `observations` filters `last_observation_log__gte`, i.e. *recently changed* and not *old*, and must never be used to measure how long a finding has been open; `created_before` is the filter that does.
 
 ## Tool surface invariants
 

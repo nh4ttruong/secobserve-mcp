@@ -11,7 +11,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/secobserve-mcp?style=flat-square&color=blue)](https://pypi.org/project/secobserve-mcp/)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue?style=flat-square&logo=python&logoColor=white)](https://pypi.org/project/secobserve-mcp/)
-[![SecObserve](https://img.shields.io/badge/SecObserve-1.59.0%2B-0b7285?style=flat-square)](https://github.com/SecObserve/SecObserve)
+[![SecObserve](https://img.shields.io/badge/SecObserve-1.65.0%2B-0b7285?style=flat-square)](https://github.com/SecObserve/SecObserve)
 [![License](https://img.shields.io/github/license/nh4ttruong/secobserve-mcp?style=flat-square&color=green)](LICENSE)
 [![Glama](https://glama.ai/mcp/servers/nh4ttruong/secobserve-mcp/badges/score.svg)](https://glama.ai/mcp/servers/nh4ttruong/secobserve-mcp)
 
@@ -45,7 +45,7 @@
 
 ## Prompts
 
-Six prompts, for the work that is a sequence of calls rather than one. A prompt is fetched by name when someone picks it, so it costs nothing per session — unlike a tool schema, which is sent on every connection.
+Seven prompts, for the work that is a sequence of calls rather than one. A prompt is fetched by name when someone picks it, so it costs nothing per session — unlike a tool schema, which is sent on every connection.
 
 | Prompt | Purpose |
 | --- | --- |
@@ -55,8 +55,9 @@ Six prompts, for the work that is a sequence of calls rather than one. A prompt 
 | `daily-report` | Today's counts per product, what moved today, what is still open. |
 | `weekly-report` | The same three parts over the past 7 days, for the report someone sends on. |
 | `monthly-report` | A month's closing numbers and the month-over-month delta. |
+| `quick-report` | Two tables at a glance: active findings by severity, and five of them in full, for a product, a group or the estate. |
 
-Each one carries the caveats that decide whether the report is right: metrics cover the default branch only and answer `200` with every count at zero when the job has not run, no filter expresses a calendar month, and nothing in SecObserve is a due date or an SLA.
+Each one carries the caveats that decide whether the report is right: metrics cover the default branch only and answer `200` with an earlier day's counts when the job has not run, and nothing in SecObserve is a due date or an SLA.
 
 ## Install
 
