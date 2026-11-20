@@ -51,6 +51,15 @@ def _require_op(resource_name: str, resource: Resource, op: str) -> None:
     )
 
 
+def _require_deletes_enabled() -> None:
+    if not get_config().allow_delete:
+        raise SecObserveError(
+            "Deletes are disabled on this server (SECOBSERVE_ALLOW_DELETE is not set). "
+            "Deletion in SecObserve cascades and is irreversible, so it must be enabled deliberately. "
+            "Consider assessing observations as 'Not affected' or 'Risk accepted' instead."
+        )
+
+
 def _resolve_fields(resource: Resource, requested: list[str] | None) -> tuple[tuple[str, ...] | None, str | None]:
     """Decide the projection and the note explaining it."""
     if requested == ["*"]:
@@ -648,14 +657,7 @@ async def secobserve_delete(
         delete operation, or when confirm_name is missing for a product or product
         group. A 409 means something still references the record.
     """
-    config = get_config()
-    if not config.allow_delete:
-        raise SecObserveError(
-            "Deletes are disabled on this server (SECOBSERVE_ALLOW_DELETE is not set). "
-            "Deletion in SecObserve cascades and is irreversible, so it must be enabled deliberately. "
-            "Consider assessing observations as 'Not affected' or 'Risk accepted' instead."
-        )
-
+    _require_deletes_enabled()
     resource_def = get_resource(resource)
     _require_op(resource, resource_def, DELETE)
 
@@ -759,7 +761,8 @@ async def secobserve_call_action(
     Error Handling:
         Unknown action -> error listing the resource's valid actions. Missing or
         stray id -> error saying which the action needs. Read-only mode blocks
-        every non-GET action.
+        every non-GET action. A DELETE, or an action whose name contains
+        "delete", is refused unless SECOBSERVE_ALLOW_DELETE is set.
     """
     resource_def = get_resource(resource)
     action_def = resource_def.action(action)
@@ -776,6 +779,8 @@ async def secobserve_call_action(
         f"{resource_def.path}{id}/{action_def.name}/" if action_def.detail else f"{resource_def.path}{action_def.name}/"
     )
     verb = method or action_def.method
+    if verb == "DELETE" or "delete" in action_def.name:
+        _require_deletes_enabled()
 
     payload = await request(
         verb,

@@ -92,7 +92,7 @@ uv venv && uv pip install -e ".[dev]"
 | `SECOBSERVE_TIMEOUT` | `60` | Seconds. SecObserve imports and scans inside the request, and a timeout does not cancel one; raise it to get the counts back from the call itself. |
 | `SECOBSERVE_VERIFY_SSL` | `true` | Set false only for a self-signed dev certificate. |
 | `SECOBSERVE_READ_ONLY` | `false` | `true` refuses every non-GET call. |
-| `SECOBSERVE_ALLOW_DELETE` | `false` | `secobserve_delete` is off until this is set. |
+| `SECOBSERVE_ALLOW_DELETE` | `false` | `secobserve_delete` and the bulk-delete actions are off until this is set. |
 | `SECOBSERVE_IMPORT_DIR` | working directory | Uploads may only be read from this tree. |
 | `SECOBSERVE_EXPORT_DIR` | `./secobserve-exports` | Exports and VEX documents are written here. |
 | `SECOBSERVE_AUDIT_LOG` | `true` | One JSON line per tool call on stderr. `false` switches it off. |

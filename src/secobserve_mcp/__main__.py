@@ -38,7 +38,7 @@ EPILOG = f"""environment:
   {ENV_TIMEOUT}      request timeout in seconds (default 60; raise it for imports and scans)
   {ENV_VERIFY_SSL}   set to false only for a self-signed dev certificate
   {ENV_READ_ONLY}    set to true to refuse every write
-  {ENV_ALLOW_DELETE} set to true to enable secobserve_delete (deletes cascade)
+  {ENV_ALLOW_DELETE} set to true to enable secobserve_delete and bulk-delete actions (deletes cascade)
   {ENV_IMPORT_DIR}   directory uploads may be read from (default: working directory)
   {ENV_EXPORT_DIR}   directory exports are written to (default: ./secobserve-exports)
 """

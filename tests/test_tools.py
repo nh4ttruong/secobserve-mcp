@@ -758,3 +758,38 @@ async def test_writes_are_blocked_in_read_only_mode(monkeypatch: pytest.MonkeyPa
     result = await call("secobserve_assess_observation", observation_id=1, status="Resolved", comment="c")
 
     assert "read-only mode" in result
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    ("resource", "action", "id", "method"),
+    [
+        ("products", "observations_bulk_delete", 12, None),
+        ("products", "license_components_bulk_delete", 12, None),
+        ("observation_logs", "bulk_delete", None, None),
+        ("products", "apply_rules", 12, "DELETE"),
+    ],
+)
+async def test_an_action_that_deletes_needs_allow_delete(
+    resource: str, action: str, id: int | None, method: str | None
+) -> None:
+    result = await secobserve_call_action(
+        resource=resource, action=action, id=id, body={"observations": [1]}, method=method
+    )
+
+    assert result.startswith("Error:") and "SECOBSERVE_ALLOW_DELETE" in result
+    assert not respx.calls
+
+
+@respx.mock
+async def test_an_action_that_deletes_runs_once_deletes_are_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(config.ENV_ALLOW_DELETE, "true")
+    config.get_config.cache_clear()
+    route = respx.post(f"{API}/products/12/observations_bulk_delete/").mock(return_value=httpx.Response(204))
+
+    result = await secobserve_call_action(
+        resource="products", action="observations_bulk_delete", id=12, body={"observations": [1]}
+    )
+
+    assert route.called
+    assert "accepted" in result
