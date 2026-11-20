@@ -60,6 +60,16 @@ SCHEMA = {
                 ]
             }
         },
+        # COMPONENT_SPLIT_REQUEST leaves read-only fields out of a request component entirely.
+        "/api/general_rules/{id}/": {
+            "patch": {
+                "requestBody": {
+                    "content": {
+                        "application/json": {"schema": {"$ref": "#/components/schemas/PatchedGeneralRuleRequest"}}
+                    }
+                }
+            }
+        },
     },
     "components": {
         "schemas": {
@@ -78,6 +88,7 @@ SCHEMA = {
                     "id": {"type": "integer", "readOnly": True},
                 },
             },
+            "PatchedGeneralRuleRequest": {"properties": {"name": {"type": "string"}, "enabled": {"type": "boolean"}}},
         }
     },
 }

@@ -105,6 +105,29 @@ async def _validate_filters(resource_name: str, resource: Resource, filters: dic
         )
 
 
+async def _validate_body(resource_name: str, method: str, path: str, data: dict[str, Any]) -> None:
+    """Fail loudly on a body key the serializer would silently drop.
+
+    DRF ignores unknown and read-only keys and still answers 2xx, so a misspelled
+    field reports a write that never happened.
+    """
+    try:
+        body = (await schema_reader.describe_path(path)).get(method, {}).get("body_fields", {})
+    except Exception:  # noqa: BLE001 - validation is best-effort; the API stays the authority
+        return
+    if not body:
+        return
+
+    writable = sorted(name for name, field in body.items() if not field.get("read_only"))
+    refused = sorted(set(data) - set(writable))
+    if refused:
+        raise ValueError(
+            f"{', '.join(refused)} {'is not a writable field' if len(refused) == 1 else 'are not writable fields'} "
+            f"of '{resource_name}' on {method}, and the API would drop it in silence while reporting success. "
+            f"Writable fields: {', '.join(writable) or 'none'}."
+        )
+
+
 @mcp.tool(
     name="secobserve_list_resources",
     title="List SecObserve Resources",
@@ -490,9 +513,10 @@ async def secobserve_create(
 ) -> str:
     """Create a record in SecObserve (product, branch, service, rule, policy, member, ...).
 
-    Call secobserve_describe_resource for the resource first: SecObserve's
-    serializers reject unknown fields and enforce enums, and its 400 bodies name
-    the offending field.
+    Call secobserve_describe_resource for the resource first. SecObserve's
+    serializers silently drop unknown and read-only keys, so this tool refuses
+    them against the live schema; the serializers enforce types and enums, and
+    their 400 bodies name the offending field.
 
     Args:
         resource (str): Resource name supporting create.
@@ -513,11 +537,13 @@ async def secobserve_create(
 
     Error Handling:
         Refused with a clear message when the resource has no create operation, or
-        when SECOBSERVE_READ_ONLY is set. 400 responses are returned with the
-        field-level detail from the API.
+        when SECOBSERVE_READ_ONLY is set. A key that is not a writable field ->
+        refused before the request, listing the writable fields. 400 responses
+        are returned with the field-level detail from the API.
     """
     resource_def = get_resource(resource)
     _require_op(resource, resource_def, CREATE)
+    await _validate_body(resource, "POST", resource_def.path, data)
 
     payload = await request("POST", resource_def.path, json_body=data)
     if not isinstance(payload, dict):
@@ -578,12 +604,15 @@ async def secobserve_update(
 
     Error Handling:
         Refused when the resource has no update operation or the server is read-only.
+        A key that is not a writable field -> refused before the request, listing
+        the writable fields; SecObserve would drop it and still answer success.
         400 responses carry the API's field-level validation detail.
     """
     resource_def = get_resource(resource)
     _require_op(resource, resource_def, UPDATE)
 
     method = "PUT" if replace else "PATCH"
+    await _validate_body(resource, method, f"{resource_def.path}{{id}}/", data)
     payload = await request(method, f"{resource_def.path}{id}/", json_body=data)
     if not isinstance(payload, dict):
         return f"Updated {resource} {id}. The API returned no body."
