@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -520,6 +520,13 @@ def metrics_status_route(last_calculated: datetime | None, interval: object = 60
     )
 
 
+def zone_at(hour: int, minute: int = 0) -> timezone:
+    """A UTC offset in which it is now about hour:minute, so a test does not depend on when it runs."""
+    now = datetime.now(UTC)
+    offset = (hour * 60 + minute - (now.hour * 60 + now.minute)) % 1440
+    return timezone(timedelta(minutes=offset - 1440 if offset > 720 else offset))
+
+
 def product_lookup_routes(product_id: int, *, is_group: bool = False) -> tuple[respx.Route, respx.Route]:
     """product_names holds products only, so a product group answers 404 there and 200 on product_group_names."""
     missing = httpx.Response(404, json={"detail": "Not found."})
@@ -533,7 +540,7 @@ def product_lookup_routes(product_id: int, *, is_group: bool = False) -> tuple[r
 @respx.mock
 async def test_current_metrics_calculated_recently_carry_no_stale_block() -> None:
     respx.get(f"{API}/metrics/product_metrics_current/").mock(return_value=httpx.Response(200, json=CURRENT_METRICS))
-    status = metrics_status_route(datetime.now(UTC).astimezone())
+    status = metrics_status_route(datetime.now(zone_at(12)))
 
     payload = json.loads(await call("secobserve_product_metrics", kind="current"))
 
@@ -576,11 +583,25 @@ async def test_staleness_is_measured_in_elapsed_time_not_calendar_days(
     minutes_ago: int, interval: object, stale: bool
 ) -> None:
     respx.get(f"{API}/metrics/product_metrics_current/").mock(return_value=httpx.Response(200, json=CURRENT_METRICS))
-    metrics_status_route(datetime.now(UTC).astimezone() - timedelta(minutes=minutes_ago), interval)
+    metrics_status_route(datetime.now(zone_at(12)) - timedelta(minutes=minutes_ago), interval)
 
     payload = json.loads(await call("secobserve_product_metrics", kind="current"))
 
     assert ("stale" in payload) is stale
+
+
+@respx.mock
+async def test_current_metrics_are_flagged_after_the_backends_midnight_until_a_run_finishes() -> None:
+    """Today's rows are written product by product and last_calculated only at the end, so the counts are partial."""
+    respx.get(f"{API}/metrics/product_metrics_current/").mock(return_value=httpx.Response(200, json=CURRENT_METRICS))
+    before_midnight = datetime.now(zone_at(0, 5)) - timedelta(minutes=12)
+    metrics_status_route(before_midnight, 5)
+
+    payload = json.loads(await call("secobserve_product_metrics", kind="current"))
+
+    assert payload["stale"]["last_calculated"] == before_midnight.isoformat()
+    assert "day changed" in payload["stale"]["warning"]
+    assert "not a measurement" in payload["stale"]["warning"]
 
 
 @respx.mock

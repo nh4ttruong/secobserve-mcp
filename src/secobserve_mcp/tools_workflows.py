@@ -406,14 +406,25 @@ _STALE_MINIMUM = timedelta(minutes=30)
 def _metrics_staleness(status: Any) -> dict[str, Any] | None:
     """None when the metrics job ran recently, otherwise a block saying why the counts are not a measurement.
 
-    Elapsed time, not calendar dates: the backend decides which day the counts come from in its own TIME_ZONE, so a
-    host in another zone would keep reporting the numbers as current for as many hours as it runs ahead.
+    Elapsed time, plus the date in the timestamp's own offset: the backend serialises it in its TIME_ZONE, the zone it
+    picks the day's rows in, while this host's zone says nothing about the backend's day.
     """
     last_calculated = status.get("last_calculated") if isinstance(status, dict) else None
     interval = _calculation_interval(status)
     elapsed = _elapsed_since(last_calculated)
     if elapsed is not None and elapsed <= max(_STALE_AFTER_RUNS * interval, _STALE_MINIMUM):
-        return None
+        if not _backend_day_changed_since(last_calculated):
+            return None
+        return {
+            "last_calculated": last_calculated,
+            "warning": (
+                "SecObserve's day changed after the metrics job last finished, and the job writes today's rows "
+                "product by product before it records a finished run. Until the next run finishes, every count below "
+                "is a partial sum or a zero the backend filled in, not a measurement. Do not quote these numbers. "
+                f"Wait for the next run (every {int(interval.total_seconds() // 60)} minutes), or count the rows "
+                "themselves with secobserve_list."
+            ),
+        }
     if elapsed is not None:
         when = f"{_format_elapsed(elapsed)} ago"
     elif last_calculated is None:
@@ -486,6 +497,15 @@ def _elapsed_since(timestamp: Any) -> timedelta | None:
     except ValueError:
         return None
     return datetime.now(UTC) - (parsed if parsed.tzinfo else parsed.astimezone())
+
+
+def _backend_day_changed_since(timestamp: Any) -> bool:
+    """Whether today, in the offset the timestamp carries, is a later date than the timestamp's own."""
+    try:
+        parsed = datetime.fromisoformat(timestamp)
+    except (TypeError, ValueError):
+        return False
+    return parsed.tzinfo is not None and datetime.now(parsed.tzinfo).date() > parsed.date()
 
 
 def _format_elapsed(elapsed: timedelta) -> str:
