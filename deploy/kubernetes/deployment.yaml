@@ -17,7 +17,7 @@ spec:
       containers:
         - name: secobserve-mcp
           # Pinned: `latest` moves the tool surface under an already-configured client.
-          image: ghcr.io/nh4ttruong/secobserve-mcp:0.4.0
+          image: ghcr.io/nh4ttruong/secobserve-mcp:1.0.0
           # Replaces the image CMD rather than adding to it; a newer image may need one more flag to allow HTTP with a token from the environment, so check `--help`.
           args: ["--transport", "http", "--host", "0.0.0.0", "--shared-identity"]
           ports:

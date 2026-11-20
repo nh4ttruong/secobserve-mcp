@@ -121,3 +121,21 @@ def test_the_release_script_refuses_a_dockerfile_without_the_ownership_label(
         'FROM python:3.13-slim\nLABEL io.modelcontextprotocol.server.name="io.github.o/p"\n'
     )
     release.check_oci_label()
+
+
+def test_the_deploy_image_pins_are_rewritten() -> None:
+    chart = 'apiVersion: v2\nversion: 0.1.0\nappVersion: "0.4.0"\n'
+    manifest = "          image: ghcr.io/nh4ttruong/secobserve-mcp:0.4.0\n          args: []\n"
+
+    assert 'appVersion: "1.0.1"' in release.bump_deploy("deploy/helm/secobserve-mcp/Chart.yaml", chart, "1.0.1")
+    assert "secobserve-mcp:1.0.1\n" in release.bump_deploy("deploy/kubernetes/deployment.yaml", manifest, "1.0.1")
+    with pytest.raises(release.Abort, match="Chart.yaml"):
+        release.bump_deploy("deploy/helm/secobserve-mcp/Chart.yaml", "version: 0.1.0\n", "1.0.1")
+
+
+def test_the_shipped_deploy_files_run_the_released_image() -> None:
+    """A stale pin ships manifests whose args the pinned image does not understand, so the pod crash-loops."""
+    version = release.current_version()
+    for name in release.DEPLOY_PINS:
+        text = (release.ROOT / name).read_text()
+        assert release.bump_deploy(name, text, version) == text, f"{name} does not pin {version}"

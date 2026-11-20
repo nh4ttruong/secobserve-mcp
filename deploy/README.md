@@ -40,7 +40,7 @@ The install fails when the gateway namespace or selector is unset or empty, and 
 
 ## What the defaults decide for you
 
-- `SECOBSERVE_READ_ONLY` is `true`, because one token serves every caller of the port; writes are opt-in with `--set secobserve.readOnly=false`.
+- The server is read-only, because one token serves every caller of the port: `--shared-identity` in `args` forces it, whatever `secobserve.readOnly` says.
 - `SECOBSERVE_ALLOW_DELETE` is `false`, and deletes cascade in SecObserve.
 - The readiness probe hits `/healthz`, which never calls SecObserve, so it only reports that the listener is up. A SecObserve outage leaves the pod in the Service on purpose: there is no healthier replica to fail over to, and the tool's error text says more than a refused connection.
 - The image tag is pinned, since `latest` would move the tool surface under an already-configured client.

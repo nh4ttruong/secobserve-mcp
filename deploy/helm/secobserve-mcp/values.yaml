@@ -16,7 +16,7 @@ secobserve:
   tokenSecret:
     name: ""
     key: token
-  # One token serves every caller of this port, so writes stay off until an operator decides otherwise.
+  # One token serves every caller of this port, so writes stay off; `--shared-identity` in args forces this regardless.
   readOnly: true
   allowDelete: false
 

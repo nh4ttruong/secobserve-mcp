@@ -3,4 +3,4 @@ name: secobserve-mcp
 description: MCP server exposing the SecObserve REST API
 type: application
 version: 0.1.0
-appVersion: "0.4.0"
+appVersion: "1.0.0"

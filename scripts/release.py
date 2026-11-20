@@ -25,6 +25,12 @@ CHECKS = (
     ("pytest -q", ("uv", "run", "pytest", "-q")),
 )
 
+# Manifests pin the image, never `latest`, so each release has to move the pin with it.
+DEPLOY_PINS = {
+    "deploy/helm/secobserve-mcp/Chart.yaml": (r'^appVersion: ".+?"$', 'appVersion: "{new}"'),
+    "deploy/kubernetes/deployment.yaml": (r"(image: ghcr\.io/nh4ttruong/secobserve-mcp:)\S+", r"\g<1>{new}"),
+}
+
 
 class Abort(Exception):
     pass
@@ -54,6 +60,14 @@ def bump_pyproject(text: str, new: str) -> str:
     text, count = re.subn(r'^version = ".+?"$', f'version = "{new}"', text, count=1, flags=re.MULTILINE)
     if count != 1:
         raise Abort("could not rewrite the version in pyproject.toml")
+    return text
+
+
+def bump_deploy(name: str, text: str, new: str) -> str:
+    pattern, replacement = DEPLOY_PINS[name]
+    text, count = re.subn(pattern, replacement.format(new=new), text, count=1, flags=re.MULTILINE)
+    if count != 1:
+        raise Abort(f"could not rewrite the image version in {name}")
     return text
 
 
@@ -137,6 +151,7 @@ def main() -> int:
         edits = {
             "pyproject.toml": bump_pyproject((ROOT / "pyproject.toml").read_text(), new),
             "server.json": bump_server_json((ROOT / "server.json").read_text(), old, new),
+            **{name: bump_deploy(name, (ROOT / name).read_text(), new) for name in DEPLOY_PINS},
         }
 
         print(f"{old} -> {new}")
