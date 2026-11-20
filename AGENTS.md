@@ -107,6 +107,7 @@ Verified against SecObserve 1.59.2.
 - SecObserve serializers return **every** column: an observation is around 100 fields plus nested `product_data` / `parser_data`, so one raw page of 25 rows is tens of thousands of tokens.
 - Every resource that returns many rows must have `list_fields` in `registry.py`. Having no default projection is a bug, not a choice.
 - `fields=["*"]` is the only way to opt out of projection, and a list result must say what it dropped.
+- A projected path that no row has shows as `null`, so the result names it in `missing_fields` with the top-level fields that do exist. A key present with `null` is data and is never named.
 - Long string values are truncated in markdown with a note giving the real length and pointing at `secobserve_get`. Never truncate in the JSON format.
 - Field projection uses dotted paths (`product_data.name`). Check field names against a real response instead of guessing: `license_components` uses `product_name`, while `observations` and the `vex_*` resources use `product_data.name`.
 

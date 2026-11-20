@@ -29,13 +29,18 @@ MAX_VALUE_CHARS = 400
 MAX_RESULT_CHARS = 25_000
 
 
-def pluck(obj: dict[str, Any], path: str) -> Any:
-    """Read a possibly dotted path out of a nested dict (e.g. 'product_data.name')."""
+_ABSENT = object()
+
+
+def pluck(obj: dict[str, Any], path: str, absent: Any = None) -> Any:
+    """Read a possibly dotted path out of a nested dict (e.g. 'product_data.name'), or `absent` if a key is missing."""
     current: Any = obj
     for part in path.split("."):
-        if not isinstance(current, dict):
+        if current is None:
             return None
-        current = current.get(part)
+        if not isinstance(current, dict) or part not in current:
+            return absent
+        current = current[part]
     return current
 
 
@@ -44,6 +49,16 @@ def project(obj: dict[str, Any], fields: tuple[str, ...] | list[str] | None) -> 
     if not fields:
         return obj
     return {path: pluck(obj, path) for path in fields}
+
+
+def missing_fields(
+    rows: list[dict[str, Any]], fields: tuple[str, ...] | list[str] | None
+) -> dict[str, list[str]] | None:
+    """Requested paths that no row has; projection shows them as null, indistinguishable from a real null."""
+    absent = [path for path in fields or () if all(pluck(row, path, _ABSENT) is _ABSENT for row in rows)]
+    if not rows or not absent:
+        return None
+    return {"absent": absent, "available": sorted({key for row in rows for key in row})}
 
 
 def _truncate(value: Any) -> Any:
@@ -173,6 +188,11 @@ def render_items(
         lines.append(trim_note)
     if dropped_note:
         lines.append(dropped_note)
+    if missing := envelope.get("missing_fields"):
+        lines.append(
+            f"Absent from every row, so shown as null: {', '.join(missing['absent'])}. "
+            f"Top-level fields the rows have: {', '.join(missing['available'])}."
+        )
     lines.append("")
 
     if not items:

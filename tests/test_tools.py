@@ -18,6 +18,7 @@ from secobserve_mcp.formatting import ResponseFormat, _aligned_window
 from secobserve_mcp.tools_crud import (
     secobserve_call_action,
     secobserve_delete,
+    secobserve_get,
     secobserve_list,
     secobserve_list_resources,
 )
@@ -115,6 +116,82 @@ async def test_markdown_truncates_long_values_and_says_so() -> None:
 
     assert "secobserve_get for the full text" in result
     assert len(result) < 1500
+
+
+@respx.mock
+async def test_list_names_a_requested_field_that_no_row_has() -> None:
+    respx.get(f"{API}/observations/").mock(
+        return_value=httpx.Response(200, json={"count": 1, "next": None, "results": [FAT_OBSERVATION]})
+    )
+
+    payload = json.loads(
+        await secobserve_list(resource="observations", fields=["id", "severity"], response_format=ResponseFormat.JSON)
+    )
+    markdown = await secobserve_list(resource="observations", fields=["id", "severity"])
+
+    assert payload["items"][0]["severity"] is None, "the row keeps its shape"
+    assert payload["missing_fields"]["absent"] == ["severity"]
+    assert "current_severity" in payload["missing_fields"]["available"]
+    assert "shown as null: severity" in markdown
+    assert "current_severity" in markdown
+
+
+@respx.mock
+async def test_get_names_a_requested_field_the_record_lacks() -> None:
+    respx.get(f"{API}/observations/8123/").mock(return_value=httpx.Response(200, json=FAT_OBSERVATION))
+
+    payload = json.loads(
+        await secobserve_get(
+            resource="observations", id=8123, fields=["title", "severity"], response_format=ResponseFormat.JSON
+        )
+    )
+    markdown = await secobserve_get(resource="observations", id=8123, fields=["title", "severity"])
+
+    assert payload["severity"] is None
+    assert payload["missing_fields"]["absent"] == ["severity"]
+    assert "current_severity" in payload["missing_fields"]["available"]
+    assert "missing_fields" in markdown and "current_severity" in markdown
+
+
+async def list_observations_json(rows: list[dict[str, Any]], **arguments: Any) -> dict[str, Any]:
+    with respx.mock:
+        respx.get(f"{API}/observations/").mock(
+            return_value=httpx.Response(200, json={"count": len(rows), "next": None, "results": rows})
+        )
+        return json.loads(
+            await secobserve_list(resource="observations", response_format=ResponseFormat.JSON, **arguments)
+        )
+
+
+async def test_a_field_present_as_null_is_data_not_missing() -> None:
+    row = {**FAT_OBSERVATION, "product_data": None}
+
+    payload = await list_observations_json([row], fields=["id", "current_priority", "product_data.name"])
+
+    assert payload["items"][0]["current_priority"] is None
+    assert payload["items"][0]["product_data.name"] is None
+    assert "missing_fields" not in payload
+
+
+async def test_a_nested_path_is_checked_down_to_its_leaf() -> None:
+    payload = await list_observations_json([FAT_OBSERVATION], fields=["product_data.name", "product_data.nmae"])
+
+    assert payload["items"][0]["product_data.name"] == "Portal"
+    assert payload["missing_fields"]["absent"] == ["product_data.nmae"]
+
+
+async def test_an_empty_result_has_nothing_to_say_about_fields() -> None:
+    payload = await list_observations_json([], fields=["id", "severity"])
+
+    assert "missing_fields" not in payload
+
+
+async def test_a_default_field_the_backend_stopped_returning_is_reported() -> None:
+    row = {key: value for key, value in FAT_OBSERVATION.items() if key != "epss_score"}
+
+    payload = await list_observations_json([row])
+
+    assert payload["missing_fields"]["absent"] == ["epss_score"]
 
 
 #: The shape that overflowed a client: observation_logs, 11 fields, ~500 characters per row.

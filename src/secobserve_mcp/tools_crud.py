@@ -20,7 +20,7 @@ from .app import mcp
 from .client import SecObserveError, request, tool_errors
 from .config import get_config
 from .exports import write_export
-from .formatting import ResponseFormat, paging_envelope, project, render_items, render_object
+from .formatting import ResponseFormat, missing_fields, paging_envelope, project, render_items, render_object
 from .registry import CREATE, DELETE, GET, LIST, RESOURCES, UPDATE, Resource, get_resource
 
 MAX_PAGE_SIZE = 100
@@ -360,6 +360,9 @@ async def secobserve_list(
           "trimmed": {                  # only when the budget cut rows
             "fetched": int, "returned": int, "budget_chars": int, "note": str
           },
+          "missing_fields": {           # only when a projected field is on no row
+            "absent": [str], "available": [str]   # it shows as null; retry with an available one
+          },
           "items": [ {<projected fields>} ]
         }
         In markdown format the same metadata as a header, then one section per
@@ -395,15 +398,20 @@ async def secobserve_list(
         query["ordering"] = ordering
 
     payload = await request("GET", resource_def.path, params=query)
-    rows = payload.get("results", payload if isinstance(payload, list) else [])
+    rows = [
+        row for row in payload.get("results", payload if isinstance(payload, list) else []) if isinstance(row, dict)
+    ]
     projection, note = _resolve_fields(resource_def, fields)
-    items = [project(row, projection) for row in rows if isinstance(row, dict)]
+    items = [project(row, projection) for row in rows]
+    envelope = paging_envelope(payload if isinstance(payload, dict) else {}, page, page_size, len(items))
+    if missing := missing_fields(rows, projection):
+        envelope["missing_fields"] = missing
 
     return render_items(
         items,
         title=resource,
         label=resource_def.label,
-        envelope=paging_envelope(payload if isinstance(payload, dict) else {}, page, page_size, len(items)),
+        envelope=envelope,
         response_format=response_format,
         dropped_note=note,
     )
@@ -449,7 +457,9 @@ async def secobserve_get(
     Returns:
         str: The record as markdown key/value lines, or as a JSON object with every
              field the API returned (or only the requested ones). Long string values
-             are truncated in markdown with a note giving the full length.
+             are truncated in markdown with a note giving the full length. A requested
+             field the record does not have shows as null, plus a "missing_fields" key:
+             {"absent": [str], "available": [str]}.
 
     Examples:
         - Use when: "why is observation 8123 critical?" -> resource="observations", id=8123
@@ -465,6 +475,8 @@ async def secobserve_get(
 
     payload = await request("GET", f"{resource_def.path}{id}/")
     obj = project(payload, tuple(fields) if fields else None)
+    if missing := missing_fields([payload], fields):
+        obj["missing_fields"] = missing
     label = payload.get(resource_def.label) or payload.get("name") or id
     return render_object(obj, title=f"{resource} {label} (id {id})", response_format=response_format)
 
