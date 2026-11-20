@@ -50,17 +50,6 @@ async def test_zeros_on_an_instance_that_has_calculated_are_left_alone() -> None
 
 
 @respx.mock
-async def test_zeros_before_the_days_rows_are_written_are_stale() -> None:
-    """After the backend's midnight `current` sums a day with no rows yet, while the newest timeline day still counts."""
-    _mock_current_and_status({"2026-11-19": {**ZEROS, "active_critical": 7, "open": 7}})
-
-    payload = await _current()
-
-    assert "2026-11-19" in str(payload["stale"]["warning"])  # type: ignore[index]
-    assert "not a measurement" in str(payload["stale"]["warning"])  # type: ignore[index]
-
-
-@respx.mock
 async def test_a_count_that_is_not_zero_never_costs_the_extra_call() -> None:
     """The timeline read only pays for itself on the ambiguous payload, so the common case is unchanged."""
     respx.get(f"{API}/metrics/product_metrics_current/").mock(

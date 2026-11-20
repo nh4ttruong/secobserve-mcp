@@ -424,21 +424,20 @@ def _metrics_staleness(status: Any) -> dict[str, Any] | None:
         "last_calculated": last_calculated,
         "warning": (
             f"The metrics job last ran {when}, and the backend expects it every "
-            f"{int(interval.total_seconds() // 60)} minutes. Once its own day rolls over without a run there are no "
-            "rows for that day and every count below is a zero the backend filled in, not a measurement. "
-            "Do not quote these numbers. Run secobserve_run_periodic_task(task='calculate_product_metrics'), "
+            f"{int(interval.total_seconds() // 60)} minutes. Every count below is each product's newest metrics row, "
+            "written by that run or earlier, so it is not a measurement of today. Do not quote these numbers as "
+            "current. Run secobserve_run_periodic_task(task='calculate_product_metrics'), "
             "or count the rows themselves with secobserve_list."
         ),
     }
 
 
-async def _unmeasured_zeros(product_id: int | None) -> dict[str, Any] | None:
-    """A block when all-zero counts are not a measurement, which `last_calculated` cannot tell you.
+async def _never_calculated(product_id: int | None) -> dict[str, Any] | None:
+    """A block when the job has never run, which `last_calculated` cannot tell you.
 
     Product_Metrics_Status is a get_or_create singleton whose last_calculated defaults to now, so the first read on
-    an instance that never calculated creates the row and reports that it just did; its timeline is empty. After the
-    backend's midnight `current` sums a day nobody has written rows for yet, while the newest timeline day still has
-    counts. Only a newest day of zeros means everything really is zero.
+    an instance that never calculated creates the row and reports that it just did. An empty timeline is the only
+    thing that separates "never ran" from "ran and everything really is zero".
     """
     # A week, not the full history: this runs only when the timestamp looks fresh, so nothing in the last seven
     # days means nothing is being written, and the unbounded read would be one entry per retained day.
@@ -446,19 +445,7 @@ async def _unmeasured_zeros(product_id: int | None) -> dict[str, Any] | None:
         "GET", "/metrics/product_metrics_timeline/", params={"product_id": product_id, "age": MetricsAge.WEEK.value}
     )
     if isinstance(timeline, dict) and timeline:
-        newest = max(timeline)
-        if _all_counters_zero(timeline[newest]):
-            return None
-        return {
-            "last_calculated": None,
-            "warning": (
-                f"Every count below is zero, yet the newest day in the metrics timeline ({newest}) has counts: "
-                "SecObserve's day has started and the metrics job has not written its rows yet. These zeros are not "
-                "a measurement. Do not quote these numbers. Wait for the job's next run, or run "
-                "secobserve_run_periodic_task(task='calculate_product_metrics'), or count the rows themselves with "
-                "secobserve_list."
-            ),
-        }
+        return None
     return {
         "last_calculated": None,
         "warning": (
@@ -693,7 +680,7 @@ async def secobserve_product_metrics(
         payload = await request("GET", "/metrics/product_metrics_current/", params={"product_id": product_id})
         stale = _metrics_staleness(await request("GET", "/metrics/product_metrics_status/"))
         if stale is None and _all_counters_zero(payload):
-            stale = await _unmeasured_zeros(product_id)
+            stale = await _never_calculated(product_id)
         if stale and isinstance(payload, dict):
             payload["stale"] = stale
     else:

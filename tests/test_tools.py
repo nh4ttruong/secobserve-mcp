@@ -652,6 +652,7 @@ async def test_current_metrics_are_flagged_when_the_job_stopped_hours_ago() -> N
     assert payload["stale"]["last_calculated"] == stopped.isoformat()
     assert "19h 0m ago" in payload["stale"]["warning"]
     assert "not a measurement" in payload["stale"]["warning"]
+    assert "newest metrics row" in payload["stale"]["warning"], "1.61+ falls back to older rows, never to zeros"
     assert {k: v for k, v in payload.items() if k != "stale"} == CURRENT_METRICS
     assert (product.call_count, group.call_count) == (1, 0)
 
